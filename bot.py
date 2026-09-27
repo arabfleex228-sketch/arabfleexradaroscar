@@ -294,7 +294,7 @@ def scan_item(slug, info):
             res = session.post(API_URL, data=payload, timeout=20, verify=False)
             if "INSERTED" in res.text: api_status = "تمت الإضافة للموقع بنجاح ✅"
             elif "already exists" in res.text: api_status = "موجودة مسبقاً ⚠️"
-            else: api_status = f"خطأ: {res.text}"
+            else: api_status = f"خطأ: {res.text[:100]}..." # تم التعديل هنا لقص الرسالة
         except Exception as e: api_status = f"فشل الاتصال: {e}"
 
     msg = (
