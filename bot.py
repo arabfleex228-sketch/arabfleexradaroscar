@@ -4,7 +4,6 @@ import os
 import re
 import threading
 import time
-import binascii
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, quote
 
@@ -13,7 +12,6 @@ from curl_cffi import requests as curl_requests
 import urllib3
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from Crypto.Cipher import AES
 import schedule
 
 # تعطيل تحذيرات SSL
@@ -43,31 +41,6 @@ last_scan_at = None
 scan_cycles = 0
 total_added = 0
 last_scan_result = "لم يبدأ فحص بعد"
-
-def get_infinity_session(url):
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    })
-    try:
-        res = session.get(url, timeout=15, verify=False)
-        if "toNumbers" in res.text and "slowAES.decrypt" in res.text:
-            a_match = re.search(r'a=toNumbers\("([a-f0-9]+)"\)', res.text)
-            b_match = re.search(r'b=toNumbers\("([a-f0-9]+)"\)', res.text)
-            c_match = re.search(r'c=toNumbers\("([a-f0-9]+)"\)', res.text)
-            
-            if a_match and b_match and c_match:
-                key = binascii.unhexlify(a_match.group(1))
-                iv = binascii.unhexlify(b_match.group(1))
-                cipher = AES.new(key, AES.MODE_CBC, iv)
-                decrypted = cipher.decrypt(binascii.unhexlify(c_match.group(1)))
-                cookie_val = binascii.hexlify(decrypted).decode('utf-8')
-                
-                parsed_url = urlparse(url)
-                session.cookies.set('__test', cookie_val, domain=parsed_url.netloc, path='/')
-    except Exception as e:
-        print(f"[ERROR] Infinity Session: {e}", flush=True)
-    return session
 
 def load_series_data():
     if not os.path.exists(DATA_FILE):
@@ -212,7 +185,6 @@ def scan_item(slug, info):
                 probe_found = True
                 break
                 
-        # تعديل: إذا فشل الكشاف، ابحث في جميع الروابط كإجراء احترازي
         for quality, url in candidate_urls_wrestling(slug, target_date_to_scan):
             if quality in links: continue
             attempts += 1
@@ -230,7 +202,6 @@ def scan_item(slug, info):
                 probe_found = True
                 break
                 
-        # تعديل: إذا فشل الكشاف، ابحث في جميع الروابط كإجراء احترازي
         for quality, url in candidate_urls_series(slug, season, target_episode, str(info.get("region", "EG")).upper()):
             if quality in links: continue
             attempts += 1
@@ -258,8 +229,14 @@ def scan_item(slug, info):
             "title": display_title, "episode_number": target_episode, "links_string": links_string
         }
         try:
-            session = get_infinity_session(API_URL)
-            res = session.post(API_URL, data=payload, timeout=20, verify=False)
+            # هنا تم التعديل: استخدام curl_requests للتنكر كمتصفح Chrome لكسر حماية WAF
+            res = curl_requests.post(
+                API_URL, 
+                data=payload, 
+                impersonate="chrome", 
+                timeout=20, 
+                verify=False
+            )
             if "INSERTED" in res.text: api_status = "تمت الإضافة للموقع بنجاح ✅"
             elif "already exists" in res.text: api_status = "موجودة مسبقاً ⚠️"
             else: api_status = f"خطأ: {res.text[:100]}..." 
@@ -319,7 +296,6 @@ def scan_all_series_once(is_manual=False):
     finally:
         scan_lock.release()
 
-# ==========================================
 def job_wrapper():
     scan_all_series_once()
 
@@ -607,7 +583,7 @@ if __name__ == "__main__":
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     
-    print("Bot is running with Fast Mode + CF Worker Download Proxy (STABLE VERSION)...", flush=True)
+    print("Bot is running with Fast Mode + CF Worker Download Proxy + Cloudflare WAF Bypass (STABLE VERSION)...", flush=True)
     
     while True:
         try:
