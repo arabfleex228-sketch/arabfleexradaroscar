@@ -35,7 +35,7 @@ CF_WORKERS = [
     "https://young-glade-3a0e.sspw9f88.workers.dev/?url="
 ]
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False) # تعطيل تعدد الخيوط الافتراضي لزيادة الاستقرار
 
 scan_lock = threading.Lock()
 started_at = datetime.now(timezone.utc)
@@ -147,7 +147,6 @@ def probe_urls_wrestling(slug, date_str):
 def check_link(original_url):
     import random
     try:
-        # اختيار Worker عشوائي لتوزيع الضغط
         worker = random.choice(CF_WORKERS)
         test_url = f"{worker}{quote(original_url, safe='')}"
         
@@ -179,7 +178,6 @@ def check_link(original_url):
 # ==========================================
 def is_time_to_scan(info):
     release_time_str = info.get("release_time")
-    # لو مفيش وقت متسجل (ملف الباك أب القديم)، افحص عادي
     if not release_time_str: return True 
     
     try:
@@ -189,21 +187,18 @@ def is_time_to_scan(info):
         else:
             dt = datetime.strptime(release_time_str, "%I %p")
     except ValueError:
-        return True # لو صيغة الوقت مكتوبة غلط، افحص احتياطي
+        return True
 
-    # تحديد توقيت مصر (UTC+3)
     egypt_tz = timezone(timedelta(hours=3))
     now = datetime.now(egypt_tz)
     
     now_mins = now.hour * 60 + now.minute
     target_mins = dt.hour * 60 + dt.minute
     
-    # حساب الفرق للتعامل السلس لو الوقت كان بعد منتصف الليل
     diff = now_mins - target_mins
     if diff < -720: diff += 1440
     elif diff > 720: diff -= 1440
     
-    # البوت هيصحى قبل الميعاد بـ 60 دقيقة، ويفضل صاحي للمسلسل ده لمدة 10 ساعات كحد أقصى لو اتأخر
     if -60 <= diff <= 600:
         return True
         
@@ -215,7 +210,6 @@ def is_time_to_scan(info):
 def scan_item(slug, info):
     global last_scan_result
     
-    # التيك تشيك بتاع موعد النزول أول حاجة
     if not is_time_to_scan(info):
         last_scan_result = f"{info.get('title', slug)}: خارج موعد النزول (في وضع النوم 💤)"
         return False
@@ -233,14 +227,12 @@ def scan_item(slug, info):
         target_date_to_scan = next_date_obj.strftime("%Y-%m-%d")
         target_episode = last_ep + 1
         
-        # إرسال الكشاف أولاً
         for url in probe_urls_wrestling(slug, target_date_to_scan):
             attempts += 1
             if check_link(url):
                 probe_found = True
                 break
                 
-        # لو الكشاف لقى الحلقة، نبدأ الفحص الشامل
         if probe_found:
             for quality, url in candidate_urls_wrestling(slug, target_date_to_scan):
                 if quality in links: continue
@@ -253,14 +245,12 @@ def scan_item(slug, info):
         target_episode = int(info.get("last_ep", 0)) + 1
         season = int(info.get("season", 1))
         
-        # إرسال الكشاف أولاً
         for url in probe_urls_series(slug, season, target_episode, str(info.get("region", "EG")).upper()):
             attempts += 1
             if check_link(url):
                 probe_found = True
                 break
                 
-        # لو الكشاف لقى الحلقة، نبدأ الفحص الشامل
         if probe_found:
             for quality, url in candidate_urls_series(slug, season, target_episode, str(info.get("region", "EG")).upper()):
                 if quality in links: continue
@@ -279,7 +269,6 @@ def scan_item(slug, info):
     series_id = info.get("series_id")
     found_keys = list(links.keys())
     
-    # نرسل الروابط المباشرة للموقع (لأن play.php أصبح يضيف الـ Worker تلقائياً)
     formatted_links = [f"{q.replace('p', '')}|{links[q]}" for q in ["360p", "480p", "720p", "1080p"] if q in links]
     links_string = ",".join(formatted_links)
     
@@ -294,7 +283,8 @@ def scan_item(slug, info):
             res = session.post(API_URL, data=payload, timeout=20, verify=False)
             if "INSERTED" in res.text: api_status = "تمت الإضافة للموقع بنجاح ✅"
             elif "already exists" in res.text: api_status = "موجودة مسبقاً ⚠️"
-            else: api_status = f"خطأ: {res.text[:100]}..." # تم التعديل هنا لقص الرسالة
+            # قص الرسالة لتجنب خطأ 414
+            else: api_status = f"خطأ: {res.text[:100]}..." 
         except Exception as e: api_status = f"فشل الاتصال: {e}"
 
     msg = (
@@ -304,14 +294,16 @@ def scan_item(slug, info):
         f"🌐 <b>الموقع:</b> {api_status}\n\n"
         f"✅ <i>تم قفل الحلقة والانتقال للبحث عن الحلقة القادمة...</i>"
     )
-    bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="HTML")
     
-    # التحديث الفوري عشان يتخطى الحلقة ويدخل على اللي بعدها فوراً
+    try:
+        bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="HTML")
+    except Exception as e:
+        print(f"[ERROR] Failed to send Telegram message: {e}", flush=True)
+    
     info["last_ep"] = target_episode
     if item_type == "wrestling": 
         info["last_date"] = target_date_to_scan
         
-    # تنظيف أي بيانات تتبع قديمة كانت محفوظة
     info.pop("track_id", None)
     info.pop("track_start", None)
     info.pop("track_qualities", None)
@@ -335,14 +327,28 @@ def scan_all_series_once():
                 results.append(last_scan_result)
             time.sleep(2)
         return results
+    except Exception as e:
+        print(f"[ERROR] Error during full scan: {e}", flush=True)
+        return []
     finally:
         scan_lock.release()
 
-def auto_checker_loop():
+# ==========================================
+# نظام جدولة جديد بديل للـ threading.Thread
+# ==========================================
+import schedule
+
+def job_wrapper():
+    print("[INFO] Starting scheduled scan...", flush=True)
+    scan_all_series_once()
+
+# جدولة الفحص حسب المتغير
+schedule.every(CHECK_INTERVAL_SECONDS).seconds.do(job_wrapper)
+
+def run_scheduler():
     while True:
-        try: scan_all_series_once()
-        except Exception as error: print(f"[ERROR] Checker loop: {error}", flush=True)
-        time.sleep(CHECK_INTERVAL_SECONDS)
+        schedule.run_pending()
+        time.sleep(1)
 
 def format_duration(total_seconds):
     seconds = max(0, int(total_seconds))
@@ -381,7 +387,7 @@ def admin_only(message):
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     if admin_only(message):
-        bot.reply_to(message, "🤖 <b>نظام المراقبة (سريع + دعم Worker)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
+        bot.reply_to(message, "🤖 <b>نظام المراقبة (مستقر + دعم Worker)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
 
 @bot.message_handler(commands=["backup"])
 def backup_data(message):
@@ -523,7 +529,6 @@ def set_release_time(message):
         slug = parts[1]
         time_str = parts[2]
         
-        # تجربة قراءة الوقت للتأكد من صحة الصيغة
         time_str_upper = time_str.strip().upper()
         if ":" in time_str_upper: datetime.strptime(time_str_upper, "%I:%M %p")
         else: datetime.strptime(time_str_upper, "%I %p")
@@ -575,7 +580,14 @@ def force_check(message):
     if not scan_lock.acquire(blocking=False): return bot.reply_to(message, "⏳ يوجد فحص جارٍ...")
     scan_lock.release()
     bot.reply_to(message, "🔎 <b>بدأ الفحص السريع عبر الـ Worker...</b>", parse_mode="HTML")
-    threading.Thread(target=lambda: bot.send_message(ADMIN_CHAT_ID, "✅ <b>انتهى الفحص!</b>\n\n" + ("\n".join(scan_all_series_once()) or "📭 فارغ."), parse_mode="HTML"), daemon=True).start()
+    
+    # تنفيذ الفحص اليدوي مباشرة بدلاً من خيط جديد
+    try:
+        results = scan_all_series_once()
+        msg = "✅ <b>انتهى الفحص!</b>\n\n" + ("\n".join(results) or "📭 فارغ.")
+        bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="HTML")
+    except Exception as e:
+         bot.send_message(ADMIN_CHAT_ID, f"❌ حدث خطأ أثناء الفحص اليدوي: {e}")
 
 @bot.message_handler(commands=["test"])
 def test_link_cmd(message):
@@ -607,6 +619,11 @@ def test_link_cmd(message):
         bot.reply_to(message, f"❌ خطأ: {e}")
 
 if __name__ == "__main__":
-    threading.Thread(target=auto_checker_loop, daemon=True).start()
-    print("Bot is running with Fast Mode + CF Worker Download Proxy...", flush=True)
-    bot.infinity_polling()
+    print("Bot is running with Fast Mode + CF Worker Download Proxy (STABLE VERSION)...", flush=True)
+    
+    # تشغيل المجدول في خيط منفصل وآمن
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    
+    # تشغيل البوت بدون تعدد خيوط إضافي
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
