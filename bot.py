@@ -24,6 +24,7 @@ DATA_FILE = os.environ.get("DATA_FILE", "series.json")
 CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "300"))
 SOURCE_DOMAINS = ["b2.shahidtv.net", "b1.shahidtv.net", "b3.shahidtv.net"]
 
+# رابط الـ API (تأكد أن هذا الرابط هو الذي رفعت عليه ملف api_bot.php)
 API_URL = "https://arabfleex.live/api_bot.php"
 SECRET_KEY = "ArabFleex_2024_SecRet"
 
@@ -229,7 +230,7 @@ def scan_item(slug, info):
             "title": display_title, "episode_number": target_episode, "links_string": links_string
         }
         try:
-            # هنا تم التعديل: استخدام curl_requests للتنكر كمتصفح Chrome لكسر حماية WAF
+            # استخدام curl_requests للتنكر كمتصفح Chrome لكسر حماية WAF
             res = curl_requests.post(
                 API_URL, 
                 data=payload, 
@@ -242,7 +243,6 @@ def scan_item(slug, info):
             else: api_status = f"خطأ: {res.text[:100]}..." 
         except Exception as e: api_status = f"فشل الاتصال: {str(e)[:100]}"
 
-    # حل مشكلة فشل تليجرام في إرسال الرسالة بسبب كود الـ HTML الخاص بالاستضافة
     safe_api_status = html.escape(api_status)
     safe_title = html.escape(title)
 
