@@ -44,7 +44,6 @@ scan_cycles = 0
 total_added = 0
 last_scan_result = "لم يبدأ فحص بعد"
 
-# ==========================================
 def get_infinity_session(url):
     session = requests.Session()
     session.headers.update({
@@ -90,7 +89,6 @@ def save_series_data(data):
         json.dump(data, file, ensure_ascii=False, indent=2)
     os.replace(temporary_file, DATA_FILE)
 
-# ==========================================
 def candidate_urls_series(slug, season, episode, region):
     regions = list(dict.fromkeys([region, "EG", "LB", "SA", "SY", "MA"]))
     qualities = ["360p", "480p", "720p", "1080p"]
@@ -131,7 +129,6 @@ def probe_urls_wrestling(slug, date_str):
     for suffix in suffixes:
         yield f"https://{domain}/files/wrestling/{slug}/{slug}-{date_str}{suffix}"
 
-# ==========================================
 def check_link(original_url):
     import random
     try:
@@ -161,7 +158,6 @@ def check_link(original_url):
     except Exception as e:
         return False
 
-# ==========================================
 def is_time_to_scan(info):
     release_time_str = info.get("release_time")
     if not release_time_str: return True 
@@ -190,7 +186,6 @@ def is_time_to_scan(info):
         
     return False
 
-# ==========================================
 def scan_item(slug, info):
     global last_scan_result
     
