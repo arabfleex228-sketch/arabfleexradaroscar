@@ -7,7 +7,6 @@ import time
 import binascii
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, quote
-import schedule
 
 import requests
 from curl_cffi import requests as curl_requests 
@@ -15,6 +14,7 @@ import urllib3
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from Crypto.Cipher import AES
+import schedule
 
 # تعطيل تحذيرات SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -22,14 +22,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BOT_TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY"
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "1013251619")
 DATA_FILE = os.environ.get("DATA_FILE", "series.json")
-# تم التعديل ليصبح الفحص كل 5 دقائق (300 ثانية) لتخفيف الضغط تماماً
+# الفحص كل 5 دقائق
 CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "300"))
 SOURCE_DOMAINS = ["b2.shahidtv.net", "b1.shahidtv.net", "b3.shahidtv.net"]
 
 API_URL = "https://arabfleex.live/api_bot.php"
 SECRET_KEY = "ArabFleex_2024_SecRet"
 
-# قائمة حسابات Cloudflare Workers الـ 3 الجديدة لتوزيع ضغط الفحص
 CF_WORKERS = [
     "https://jolly-term-f45d.afu6656gu.workers.dev/?url=",
     "https://shy-snow-52c3.alifalah9988044.workers.dev/?url=",
@@ -45,8 +44,6 @@ scan_cycles = 0
 total_added = 0
 last_scan_result = "لم يبدأ فحص بعد"
 
-# ==========================================
-# دالة تخطي حماية InfinityFree
 # ==========================================
 def get_infinity_session(url):
     session = requests.Session()
@@ -94,8 +91,6 @@ def save_series_data(data):
     os.replace(temporary_file, DATA_FILE)
 
 # ==========================================
-# توليد الروابط للمسلسلات
-# ==========================================
 def candidate_urls_series(slug, season, episode, region):
     regions = list(dict.fromkeys([region, "EG", "LB", "SA", "SY", "MA"]))
     qualities = ["360p", "480p", "720p", "1080p"]
@@ -110,9 +105,6 @@ def candidate_urls_series(slug, season, episode, region):
                     for suffix in suffixes[quality]:
                         yield quality, f"https://{domain}/files/{item_region}/{slug}/{slug}-S{season:02d}-{episode_code}{suffix}"
 
-# ==========================================
-# توليد الروابط لعروض المصارعة
-# ==========================================
 def candidate_urls_wrestling(slug, date_str):
     qualities = ["360p", "480p", "720p", "1080p"]
     suffixes = {
@@ -123,9 +115,6 @@ def candidate_urls_wrestling(slug, date_str):
             for suffix in suffixes[quality]:
                 yield quality, f"https://{domain}/files/wrestling/{slug}/{slug}-{date_str}{suffix}"
 
-# ==========================================
-# توليد روابط "الكشاف الذكي" (480p فقط على سيرفر b2)
-# ==========================================
 def probe_urls_series(slug, season, episode, region):
     domain = "b2.shahidtv.net"
     regions = list(dict.fromkeys([region, "EG"]))
@@ -142,8 +131,6 @@ def probe_urls_wrestling(slug, date_str):
     for suffix in suffixes:
         yield f"https://{domain}/files/wrestling/{slug}/{slug}-{date_str}{suffix}"
 
-# ==========================================
-# فحص الروابط عبر Cloudflare Workers
 # ==========================================
 def check_link(original_url):
     import random
@@ -175,8 +162,6 @@ def check_link(original_url):
         return False
 
 # ==========================================
-# دالة حساب وقت الفحص (النوم الذكي)
-# ==========================================
 def is_time_to_scan(info):
     release_time_str = info.get("release_time")
     if not release_time_str: return True 
@@ -206,8 +191,6 @@ def is_time_to_scan(info):
     return False
 
 # ==========================================
-# عملية الفحص الأساسية (باستخدام الكشاف)
-# ==========================================
 def scan_item(slug, info):
     global last_scan_result
     
@@ -234,12 +217,12 @@ def scan_item(slug, info):
                 probe_found = True
                 break
                 
-        if probe_found:
-            for quality, url in candidate_urls_wrestling(slug, target_date_to_scan):
-                if quality in links: continue
-                attempts += 1
-                if check_link(url):
-                    links[quality] = url
+        # تعديل: إذا فشل الكشاف، ابحث في جميع الروابط كإجراء احترازي
+        for quality, url in candidate_urls_wrestling(slug, target_date_to_scan):
+            if quality in links: continue
+            attempts += 1
+            if check_link(url):
+                links[quality] = url
                 
         display_title = target_date_to_scan.replace("-", ".")
     else:
@@ -252,12 +235,12 @@ def scan_item(slug, info):
                 probe_found = True
                 break
                 
-        if probe_found:
-            for quality, url in candidate_urls_series(slug, season, target_episode, str(info.get("region", "EG")).upper()):
-                if quality in links: continue
-                attempts += 1
-                if check_link(url):
-                    links[quality] = url
+        # تعديل: إذا فشل الكشاف، ابحث في جميع الروابط كإجراء احترازي
+        for quality, url in candidate_urls_series(slug, season, target_episode, str(info.get("region", "EG")).upper()):
+            if quality in links: continue
+            attempts += 1
+            if check_link(url):
+                links[quality] = url
                 
         display_title = f"الحلقة {target_episode}"
         target_date_to_scan = None
@@ -284,15 +267,18 @@ def scan_item(slug, info):
             res = session.post(API_URL, data=payload, timeout=20, verify=False)
             if "INSERTED" in res.text: api_status = "تمت الإضافة للموقع بنجاح ✅"
             elif "already exists" in res.text: api_status = "موجودة مسبقاً ⚠️"
-            # قص الرسالة لتجنب خطأ 414
             else: api_status = f"خطأ: {res.text[:100]}..." 
-        except Exception as e: api_status = f"فشل الاتصال: {e}"
+        except Exception as e: api_status = f"فشل الاتصال: {str(e)[:100]}"
+
+    # حل مشكلة فشل تليجرام في إرسال الرسالة بسبب كود الـ HTML الخاص بالاستضافة
+    safe_api_status = html.escape(api_status)
+    safe_title = html.escape(title)
 
     msg = (
-        f"🎬 <b>تم اصطياد وإضافة جديد:</b> {title}\n"
+        f"🎬 <b>تم اصطياد وإضافة جديد:</b> {safe_title}\n"
         f"📺 <b>{display_title}</b>\n"
         f"📶 <b>الجودات اللي نزلت:</b> {len(links)}/4 ({', '.join(found_keys)})\n"
-        f"🌐 <b>الموقع:</b> {api_status}\n\n"
+        f"🌐 <b>الموقع:</b> <code>{safe_api_status}</code>\n\n"
         f"✅ <i>تم قفل الحلقة والانتقال للبحث عن الحلقة القادمة...</i>"
     )
     
@@ -311,9 +297,13 @@ def scan_item(slug, info):
 
     return True
 
-def scan_all_series_once():
+def scan_all_series_once(is_manual=False):
     global last_scan_at, scan_cycles, total_added
-    if not scan_lock.acquire(blocking=False): return []
+    if not scan_lock.acquire(blocking=False): 
+        if is_manual:
+             try: bot.send_message(ADMIN_CHAT_ID, "⏳ <b>يوجد فحص قيد التشغيل بالفعل، يرجى الانتظار ثواني...</b>", parse_mode="HTML")
+             except: pass
+        return []
     try:
         scan_cycles += 1
         last_scan_at = datetime.now(timezone.utc)
@@ -323,7 +313,7 @@ def scan_all_series_once():
             if scan_item(slug, info):
                 total_added += 1
                 save_series_data(data)
-                results.append(f"{info.get('title', slug)}: تم التحديث ✅")
+                results.append(f"{info.get('title', slug)}: تمت الإضافة ✅")
             else:
                 results.append(last_scan_result)
             time.sleep(1.5)
@@ -334,11 +324,10 @@ def scan_all_series_once():
     finally:
         scan_lock.release()
 
+# ==========================================
 def job_wrapper():
-    print("[INFO] Starting scheduled scan...", flush=True)
     scan_all_series_once()
 
-# الجدولة
 schedule.every(CHECK_INTERVAL_SECONDS).seconds.do(job_wrapper)
 
 def run_scheduler():
@@ -573,24 +562,16 @@ def status(message):
 @bot.message_handler(commands=["scan"])
 def force_check(message):
     if not admin_only(message): return
+    bot.reply_to(message, "🔎 <b>بدأ الفحص السريع عبر الـ Worker... (البوت لن يتوقف عن العمل)</b>", parse_mode="HTML")
     
-    # التأكد أن مفيش فحص تاني شغال عشان البوت ميهنجش
-    if scan_lock.locked():
-        return bot.reply_to(message, "⏳ <b>يوجد فحص تلقائي أو يدوي قيد التشغيل حالياً، يرجى الانتظار...</b>", parse_mode="HTML")
-    
-    bot.reply_to(message, "🔎 <b>بدأ الفحص السريع عبر الـ Worker... (البوت لن يتوقف عن العمل أثناء الفحص)</b>", parse_mode="HTML")
-    
-    # دالة داخلية تقوم بالفحص اليدوي في الخلفية وإرسال النتيجة
-    def background_manual_scan():
-        try:
-            results = scan_all_series_once()
-            msg = "✅ <b>انتهى الفحص!</b>\n\n" + ("\n".join(results) or "📭 فارغ.")
-            bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="HTML")
-        except Exception as e:
-            bot.send_message(ADMIN_CHAT_ID, f"❌ حدث خطأ أثناء الفحص اليدوي: {e}")
+    def background_scan():
+        results = scan_all_series_once(is_manual=True)
+        if results:
+            msg = "✅ <b>انتهى الفحص!</b>\n\n" + ("\n".join(results))
+            try: bot.send_message(message.chat.id, msg, parse_mode="HTML")
+            except Exception as e: print(f"Error sending scan results: {e}")
 
-    # تشغيل الفحص اليدوي في Thread منفصل لكي لا يُجمّد البوت ويستقبل الرسايل عادي
-    threading.Thread(target=background_manual_scan, daemon=True).start()
+    threading.Thread(target=background_scan, daemon=True).start()
 
 @bot.message_handler(commands=["test"])
 def test_link_cmd(message):
@@ -622,25 +603,20 @@ def test_link_cmd(message):
         bot.reply_to(message, f"❌ خطأ: {e}")
 
 if __name__ == "__main__":
-    print("Bot is starting... Cleaning up old webhooks/polling sessions.", flush=True)
-    
+    print("Bot is starting...", flush=True)
     try:
-        # مسح أي خطاف ويب قديم لمنع خطأ 409 Conflict
         bot.remove_webhook()
         time.sleep(1)
-    except Exception as e:
-        print(f"Webhook cleanup error (Ignored): {e}")
+    except: pass
 
-    # تشغيل المجدول في خيط منفصل للبحث التلقائي الآمن
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     
     print("Bot is running with Fast Mode + CF Worker Download Proxy (STABLE VERSION)...", flush=True)
     
-    # حلقة حماية لضمان عدم توقف البوت إذا حدث انقطاع في الاتصال مع تليجرام
     while True:
         try:
             bot.infinity_polling(timeout=10, long_polling_timeout=5)
         except Exception as e:
-            print(f"[ERROR] Polling crashed: {e}. Restarting in 5 seconds...", flush=True)
+            print(f"[ERROR] Polling crashed: {e}. Restarting...", flush=True)
             time.sleep(5)
