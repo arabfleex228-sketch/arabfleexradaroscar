@@ -160,10 +160,11 @@ def is_time_to_scan(info):
         
     return False
 
-def scan_item(slug, info):
+def scan_item(slug, info, is_manual=False):
     global last_scan_result
     
-    if not is_time_to_scan(info):
+    # التعديل هنا: إذا كان الفحص يدوياً، تخطى شرط الوقت تماماً وافحص فوراً
+    if not is_manual and not is_time_to_scan(info):
         last_scan_result = f"{info.get('title', slug)}: خارج موعد النزول (في وضع النوم 💤)"
         return False
         
@@ -213,7 +214,8 @@ def scan_item(slug, info):
         target_date_to_scan = None
 
     if not links:
-        last_scan_result = f"{info.get('title', slug)}: الفحص لم يجد جديد (تم فحص {attempts} رابط)"
+        mode_text = "يدوي" if is_manual else "تلقائي"
+        last_scan_result = f"{info.get('title', slug)}: الفحص ({mode_text}) لم يجد جديد (تم فحص {attempts} رابط)"
         return False
 
     title = info.get("title", slug)
@@ -230,7 +232,6 @@ def scan_item(slug, info):
             "title": display_title, "episode_number": target_episode, "links_string": links_string
         }
         try:
-            # استخدام curl_requests للتنكر كمتصفح Chrome لكسر حماية WAF
             res = curl_requests.post(
                 API_URL, 
                 data=payload, 
@@ -282,7 +283,8 @@ def scan_all_series_once(is_manual=False):
         data = load_series_data()
         results = []
         for slug, info in list(data.items()):
-            if scan_item(slug, info):
+            # تمرير حالة الفحص اليدوي إلى دالة scan_item
+            if scan_item(slug, info, is_manual=is_manual):
                 total_added += 1
                 save_series_data(data)
                 results.append(f"{info.get('title', slug)}: تمت الإضافة ✅")
@@ -297,7 +299,7 @@ def scan_all_series_once(is_manual=False):
         scan_lock.release()
 
 def job_wrapper():
-    scan_all_series_once()
+    scan_all_series_once(is_manual=False)
 
 schedule.every(CHECK_INTERVAL_SECONDS).seconds.do(job_wrapper)
 
@@ -343,7 +345,7 @@ def admin_only(message):
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     if admin_only(message):
-        bot.reply_to(message, "🤖 <b>نظام المراقبة (مستقر + دعم Worker)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
+        bot.reply_to(message, "🤖 <b>نظام المراقبة (مستقر + دعم Worker)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي يتجاهل المواعيد 🚀\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
 
 @bot.message_handler(commands=["backup"])
 def backup_data(message):
@@ -533,12 +535,13 @@ def status(message):
 @bot.message_handler(commands=["scan"])
 def force_check(message):
     if not admin_only(message): return
-    bot.reply_to(message, "🔎 <b>بدأ الفحص السريع عبر الـ Worker... (البوت لن يتوقف عن العمل)</b>", parse_mode="HTML")
+    bot.reply_to(message, "🔎 <b>بدأ الفحص السريع اليدوي (سيتم تجاهل المواعيد والأيام المحددة)... 🚀</b>", parse_mode="HTML")
     
     def background_scan():
+        # تمرير is_manual=True هنا يجعل البوت يتجاهل الوقت ويقوم بالبحث مباشرة
         results = scan_all_series_once(is_manual=True)
         if results:
-            msg = "✅ <b>انتهى الفحص!</b>\n\n" + ("\n".join(results))
+            msg = "✅ <b>انتهى الفحص اليدوي!</b>\n\n" + ("\n".join(results))
             try: bot.send_message(message.chat.id, msg, parse_mode="HTML")
             except Exception as e: print(f"Error sending scan results: {e}")
 
@@ -583,7 +586,7 @@ if __name__ == "__main__":
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     
-    print("Bot is running with Fast Mode + CF Worker Download Proxy + Cloudflare WAF Bypass (STABLE VERSION)...", flush=True)
+    print("Bot is running with Fast Mode + Manual Scan Override (STABLE)...", flush=True)
     
     while True:
         try:
