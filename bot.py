@@ -242,7 +242,7 @@ def scan_item(slug, info, is_manual=False):
                 API_URL, 
                 data=payload, 
                 impersonate="chrome", 
-                timeout=20, 
+                timeout=45, 
                 verify=False
             )
             if "INSERTED" in res.text: api_status = "تمت الإضافة للموقع بنجاح ✅"
