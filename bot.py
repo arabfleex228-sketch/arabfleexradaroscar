@@ -19,12 +19,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BOT_TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY"
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "1013251619")
-DATA_FILE = os.environ.get("DATA_FILE", "series.json")
+
+# --- التعديل هنا: استخدام مسار الـ Volume ---
+DATA_DIR = os.environ.get("DATA_DIR", "/app/data") 
+DATA_FILE = os.path.join(DATA_DIR, "series.json")
+# ---------------------------------------------
+
 # الفحص كل 5 دقائق
 CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "300"))
 SOURCE_DOMAINS = ["b2.shahidtv.net", "b1.shahidtv.net", "b3.shahidtv.net"]
 
-# رابط الـ API (تأكد أن هذا الرابط هو الذي رفعت عليه ملف api_bot.php)
+# رابط الـ API 
 API_URL = "https://arabfleex.live/api_bot.php"
 SECRET_KEY = "ArabFleex_2024_SecRet"
 
@@ -160,10 +165,11 @@ def is_time_to_scan(info):
         
     return False
 
+# --- إضافة متغير is_manual لتخطي الوقت ---
 def scan_item(slug, info, is_manual=False):
     global last_scan_result
     
-    # التعديل هنا: إذا كان الفحص يدوياً، تخطى شرط الوقت تماماً وافحص فوراً
+    # إذا كان الفحص يدوياً (is_manual=True) سيتجاهل الوقت
     if not is_manual and not is_time_to_scan(info):
         last_scan_result = f"{info.get('title', slug)}: خارج موعد النزول (في وضع النوم 💤)"
         return False
@@ -283,7 +289,7 @@ def scan_all_series_once(is_manual=False):
         data = load_series_data()
         results = []
         for slug, info in list(data.items()):
-            # تمرير حالة الفحص اليدوي إلى دالة scan_item
+            # تمرير حالة الفحص (يدوي أو تلقائي)
             if scan_item(slug, info, is_manual=is_manual):
                 total_added += 1
                 save_series_data(data)
@@ -299,6 +305,7 @@ def scan_all_series_once(is_manual=False):
         scan_lock.release()
 
 def job_wrapper():
+    # الفحص التلقائي يلتزم بالوقت
     scan_all_series_once(is_manual=False)
 
 schedule.every(CHECK_INTERVAL_SECONDS).seconds.do(job_wrapper)
@@ -322,6 +329,7 @@ def status_message():
         f"⏱ <b>وقت التشغيل:</b> {format_duration(uptime)}",
         f"🔍 <b>آخر فحص:</b> {last_scan_at.astimezone().strftime('%Y-%m-%d %H:%M:%S') if last_scan_at else 'لم يبدأ'}",
         f"🔄 <b>دورات الفحص:</b> {scan_cycles} | ➕ <b>الإشعارات:</b> {total_added}\n",
+        f"📁 <b>مسار البيانات:</b> <code>{DATA_FILE}</code>\n",
         "📺 <b>آخر حالة:</b>",
     ]
     if not data:
@@ -345,7 +353,7 @@ def admin_only(message):
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     if admin_only(message):
-        bot.reply_to(message, "🤖 <b>نظام المراقبة (مستقر + دعم Worker)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي يتجاهل المواعيد 🚀\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
+        bot.reply_to(message, "🤖 <b>نظام المراقبة (مستقر + دعم Worker + Volume)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي يتجاهل المواعيد 🚀\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
 
 @bot.message_handler(commands=["backup"])
 def backup_data(message):
@@ -538,7 +546,7 @@ def force_check(message):
     bot.reply_to(message, "🔎 <b>بدأ الفحص السريع اليدوي (سيتم تجاهل المواعيد والأيام المحددة)... 🚀</b>", parse_mode="HTML")
     
     def background_scan():
-        # تمرير is_manual=True هنا يجعل البوت يتجاهل الوقت ويقوم بالبحث مباشرة
+        # الفحص اليدوي يتجاهل الوقت (is_manual=True)
         results = scan_all_series_once(is_manual=True)
         if results:
             msg = "✅ <b>انتهى الفحص اليدوي!</b>\n\n" + ("\n".join(results))
@@ -582,11 +590,14 @@ if __name__ == "__main__":
         bot.remove_webhook()
         time.sleep(1)
     except: pass
+    
+    # التأكد من إنشاء المجلد قبل بدء البوت
+    os.makedirs(DATA_DIR, exist_ok=True)
 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     
-    print("Bot is running with Fast Mode + Manual Scan Override (STABLE)...", flush=True)
+    print(f"Bot is running. Data will be saved in: {DATA_FILE}", flush=True)
     
     while True:
         try:
