@@ -20,16 +20,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BOT_TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY"
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "1013251619")
 
-# --- التعديل هنا: استخدام مسار الـ Volume ---
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 DATA_FILE = os.path.join(DATA_DIR, "series.json")
-# ---------------------------------------------
 
 # الفحص كل 5 دقائق
 CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "300"))
+# أقصى مدة لمراقبة الحلقة لتجميع باقي الجودات (بالثواني) - محددة هنا بساعة (3600 ثانية)
+MAX_TRACKING_TIME_SECONDS = 3600 
+
 SOURCE_DOMAINS = ["b2.shahidtv.net", "b1.shahidtv.net", "b3.shahidtv.net"]
 
-# رابط الـ API
 API_URL = "https://arabfleex.live/api_bot.php"
 SECRET_KEY = "ArabFleex_2024_SecRet"
 
@@ -165,112 +165,152 @@ def is_time_to_scan(info):
         
     return False
 
-def scan_item(slug, info, is_manual=False):
-    global last_scan_result
-    
-    if not is_manual and not is_time_to_scan(info):
-        last_scan_result = f"{info.get('title', slug)}: خارج موعد النزول (في وضع النوم 💤)"
-        return False
-        
-    item_type = info.get("type", "series")
-    links = {}
-    attempts = 0
-    probe_found = False
-
-    if item_type == "wrestling":
-        last_date_str = info.get("last_date", "2026-01-01")
-        last_ep = int(info.get("last_ep", 0))
-        date_obj = datetime.strptime(last_date_str, "%Y-%m-%d")
-        next_date_obj = date_obj + timedelta(days=7)
-        target_date_to_scan = next_date_obj.strftime("%Y-%m-%d")
-        target_episode = last_ep + 1
-        
-        for url in probe_urls_wrestling(slug, target_date_to_scan):
-            attempts += 1
-            if check_link(url):
-                probe_found = True
-                break
-                
-        for quality, url in candidate_urls_wrestling(slug, target_date_to_scan):
-            if quality in links: continue
-            attempts += 1
-            if check_link(url):
-                links[quality] = url
-                
-        display_title = target_date_to_scan.replace("-", ".")
-    else:
-        target_episode = int(info.get("last_ep", 0)) + 1
-        season = int(info.get("season", 1))
-        
-        for url in probe_urls_series(slug, season, target_episode, str(info.get("region", "EG")).upper()):
-            attempts += 1
-            if check_link(url):
-                probe_found = True
-                break
-                
-        for quality, url in candidate_urls_series(slug, season, target_episode, str(info.get("region", "EG")).upper()):
-            if quality in links: continue
-            attempts += 1
-            if check_link(url):
-                links[quality] = url
-                
-        display_title = f"الحلقة {target_episode}"
-        target_date_to_scan = None
-
-    if not links:
-        mode_text = "يدوي" if is_manual else "تلقائي"
-        last_scan_result = f"{info.get('title', slug)}: الفحص ({mode_text}) لم يجد جديد (تم فحص {attempts} رابط)"
-        return False
-
-    title = info.get("title", slug)
-    series_id = info.get("series_id")
-    found_keys = list(links.keys())
-    
-    formatted_links = [f"{q.replace('p', '')}|{links[q]}" for q in ["360p", "480p", "720p", "1080p"] if q in links]
-    links_string = ",".join(formatted_links)
-    
-    api_status = "لم يتم تحديد ID"
-    if series_id:
-        payload = {
-            "secret_key": SECRET_KEY, "action": "insert", "series_id": series_id,
-            "title": display_title, "episode_number": target_episode, "links_string": links_string
-        }
-        try:
-            res = curl_requests.post(
-                API_URL, 
-                data=payload, 
-                impersonate="chrome", 
-                timeout=45, 
-                verify=False
-            )
-            if "INSERTED" in res.text: api_status = "تمت الإضافة للموقع بنجاح ✅"
-            elif "already exists" in res.text: api_status = "موجودة مسبقاً ⚠️"
-            else: api_status = f"خطأ: {res.text[:100]}..." 
-        except Exception as e: api_status = f"فشل الاتصال: {str(e)[:100]}"
-
-    safe_api_status = html.escape(api_status)
-    safe_title = html.escape(title)
-
-    msg = (
-        f"🎬 <b>تم اصطياد وإضافة جديد:</b> {safe_title}\n"
-        f"📺 <b>{display_title}</b>\n"
-        f"📶 <b>الجودات اللي نزلت:</b> {len(links)}/4 ({', '.join(found_keys)})\n"
-        f"🌐 <b>الموقع:</b> <code>{safe_api_status}</code>\n\n"
-        f"✅ <i>تم قفل الحلقة والانتقال للبحث عن الحلقة القادمة...</i>"
-    )
-    
+def send_telegram_msg(msg):
     try:
         bot.send_message(ADMIN_CHAT_ID, msg, parse_mode="HTML")
     except Exception as e:
         print(f"[ERROR] Failed to send Telegram message: {e}", flush=True)
+
+def scan_item(slug, info, is_manual=False):
+    global last_scan_result
     
-    info["last_ep"] = target_episode
-    if item_type == "wrestling": 
-        info["last_date"] = target_date_to_scan
+    is_currently_tracking = "tracking" in info
+    
+    # لو مش بنراقب حلقة حالياً، ومش وقت النزول، اعمل سكيب
+    if not is_manual and not is_currently_tracking and not is_time_to_scan(info):
+        last_scan_result = f"{info.get('title', slug)}: خارج موعد النزول (في وضع النوم 💤)"
+        return False
         
-    info.pop("track_id", None)
-    info.pop("track_start", None)
-    info.pop("track_qualities", None)
+    item_type = info.get("type", "series")
+    title = info.get("title", slug)
+    series_id = info.get("series_id")
+    safe_title = html.escape(title)
+
+    # تحديد الهدف (رقم الحلقة والتاريخ) بناءً على حالة المراقبة
+    if is_currently_tracking:
+        target_episode = info["tracking"]["episode"]
+        target_date_to_scan = info["tracking"].get("date")
+        links = info["tracking"]["links"].copy() # ناخذ نسخة من الروابط اللي لقيناها قبل كده
+        tracking_start_ts = info["tracking"]["start_ts"]
+    else:
+        links = {}
+        if item_type == "wrestling":
+            last_date_str = info.get("last_date", "2026-01-01")
+            last_ep = int(info.get("last_ep", 0))
+            date_obj = datetime.strptime(last_date_str, "%Y-%m-%d")
+            next_date_obj = date_obj + timedelta(days=7)
+            target_date_to_scan = next_date_obj.strftime("%Y-%m-%d")
+            target_episode = last_ep + 1
+        else:
+            target_episode = int(info.get("last_ep", 0)) + 1
+            target_date_to_scan = None
+            
+    season = int(info.get("season", 1))
+    region = str(info.get("region", "EG")).upper()
+    display_title = target_date_to_scan.replace("-", ".") if item_type == "wrestling" else f"الحلقة {target_episode}"
+
+    attempts = 0
+    new_links_found = False
+
+    # 1. مرحلة الاستكشاف (Probing) - فقط لو مش بنراقب حلقة بالفعل
+    if not is_currently_tracking:
+        probe_found = False
+        probe_generator = probe_urls_wrestling(slug, target_date_to_scan) if item_type == "wrestling" else probe_urls_series(slug, season, target_episode, region)
+        
+        for url in probe_generator:
+            attempts += 1
+            if check_link(url):
+                probe_found = True
+                break
+                
+        if not probe_found:
+            mode_text = "يدوي" if is_manual else "تلقائي"
+            last_scan_result = f"{title}: الفحص ({mode_text}) لم يجد جديد (تم فحص {attempts} رابط)"
+            return False
+
+    # 2. مرحلة تجميع الجودات
+    candidates_generator = candidate_urls_wrestling(slug, target_date_to_scan) if item_type == "wrestling" else candidate_urls_series(slug, season, target_episode, region)
+    
+    for quality, url in candidates_generator:
+        if quality in links: continue # نتخطى الجودات اللي لقيناها قبل كده
+        attempts += 1
+        if check_link(url):
+            links[quality] = url
+            new_links_found = True
+
+    # لو مفيش جودات جديدة اتضافت في الدورة دي
+    if not new_links_found and not is_currently_tracking:
+        last_scan_result = f"{title}: تم اكتشاف الحلقة ولكن لم تجهز أي جودة بعد."
+        return False
+
+    # 3. التواصل مع الـ API (لو في جديد)
+    if new_links_found:
+        formatted_links = [f"{q.replace('p', '')}|{links[q]}" for q in ["360p", "480p", "720p", "1080p"] if q in links]
+        links_string = ",".join(formatted_links)
+        
+        action = "update" if is_currently_tracking else "insert"
+        api_status = "لم يتم تحديد ID"
+        
+        if series_id:
+            payload = {
+                "secret_key": SECRET_KEY, "action": action, "series_id": series_id,
+                "title": display_title, "episode_number": target_episode, "links_string": links_string
+            }
+            try:
+                res = curl_requests.post(API_URL, data=payload, impersonate="chrome", timeout=45, verify=False)
+                if "INSERTED" in res.text: api_status = "تمت الإضافة المبدئية بنجاح ✅"
+                elif "UPDATED" in res.text: api_status = "تم تحديث الجودات بنجاح 🔄"
+                elif "already exists" in res.text: 
+                    api_status = "موجودة مسبقاً ⚠️ (جاري التحويل للمراقبة)"
+                    action = "update" # لو لقاها موجودة، يكمل مراقبة وتحديث المرة الجاية
+                else: api_status = f"خطأ: {res.text[:100]}..." 
+            except Exception as e: api_status = f"فشل الاتصال: {str(e)[:100]}"
+            
+        safe_api_status = html.escape(api_status)
+        found_keys = list(links.keys())
+        
+        # إرسال رسالة التليجرام المناسبة
+        if not is_currently_tracking:
+            info["tracking"] = {
+                "episode": target_episode,
+                "date": target_date_to_scan,
+                "start_ts": time.time(),
+                "links": links
+            }
+            msg = (
+                f"🎬 <b>تم اصطياد وإضافة حلقة جديدة:</b> {safe_title}\n"
+                f"📺 <b>{display_title}</b>\n"
+                f"📶 <b>الجودات اللي نزلت:</b> {len(links)}/4 ({', '.join(found_keys)})\n"
+                f"🌐 <b>الموقع:</b> <code>{safe_api_status}</code>\n\n"
+                f"⏳ <i>جاري مراقبة الحلقة للبحث عن باقي الجودات المفقودة...</i>"
+            )
+            send_telegram_msg(msg)
+        else:
+            info["tracking"]["links"] = links
+            msg = (
+                f"🔄 <b>تحديث جودات:</b> {safe_title} ({display_title})\n"
+                f"📶 <b>الوضع الحالي:</b> {len(links)}/4 ({', '.join(found_keys)})\n"
+                f"🌐 <b>الموقع:</b> <code>{safe_api_status}</code>"
+            )
+            send_telegram_msg(msg)
+
+    # 4. فحص شروط إنهاء المراقبة (اكتمال الـ 4 جودات أو انتهاء مهلة الساعة)
+    if "tracking" in info:
+        time_elapsed = time.time() - info["tracking"]["start_ts"]
+        is_timeout = time_elapsed >= MAX_TRACKING_TIME_SECONDS
+        is_complete = len(info["tracking"]["links"]) >= 4
+        
+        if is_complete or is_timeout:
+            # تحديث البيانات الأساسية لقفل الحلقة
+            info["last_ep"] = info["tracking"]["episode"]
+            if item_type == "wrestling": 
+                info["last_date"] = info["tracking"]["date"]
+                
+            del info["tracking"] # مسح بيانات المراقبة
+            
+            reason = "✅ اكتملت جميع الجودات" if is_complete else f"⏱ انتهت مهلة المراقبة (ساعة)"
+            msg = f"🔒 <b>تم قفل الحلقة:</b> {safe_title} ({display_title})\nالسبب: {reason}\n<i>البوت هيبدأ يبحث عن الحلقة القادمة...</i>"
+            send_telegram_msg(msg)
 
     return True
 
@@ -290,7 +330,7 @@ def scan_all_series_once(is_manual=False):
             if scan_item(slug, info, is_manual=is_manual):
                 total_added += 1
                 save_series_data(data)
-                results.append(f"{info.get('title', slug)}: تمت الإضافة ✅")
+                results.append(f"{info.get('title', slug)}: فحص نشط 🔄")
             else:
                 results.append(last_scan_result)
             time.sleep(1.5)
@@ -335,7 +375,11 @@ def status_message():
             title = html.escape(str(info.get("title", slug)))
             series_id = info.get("series_id", "❌")
             rel_time = info.get("release_time", "طوال اليوم")
-            state = "✅ مستعد"
+            
+            if "tracking" in info:
+                state = f"⏳ جاري تجميع باقي الجودات..."
+            else:
+                state = "✅ مستعد"
             
             if info.get("type") == "wrestling":
                 lines.append(f"  🥊 <b>{title}</b> (ID: {series_id}): آخر عرض {info.get('last_date')} | ⏱ {rel_time} | {state}")
@@ -349,7 +393,7 @@ def admin_only(message):
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     if admin_only(message):
-        bot.reply_to(message, "🤖 <b>نظام المراقبة (مستقر + دعم Worker + Volume)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي يتجاهل المواعيد 🚀\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
+        bot.reply_to(message, "🤖 <b>نظام المراقبة الذكي (دعم تجميع الجودات)</b>\n\n🔹 <code>/add</code> — إضافة جديد\n🔹 <code>/del</code> — حذف\n🔹 <code>/list</code> — قائمة\n🔹 <code>/setep</code> — تعديل حلقة\n🔹 <code>/setdate</code> — تعديل تاريخ\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/check</code> — الحالة\n🔹 <code>/scan</code> — فحص يدوي يتجاهل المواعيد 🚀\n🔹 <code>/test</code> — فحص رابط", parse_mode="HTML")
 
 @bot.message_handler(commands=["backup"])
 def backup_data(message):
@@ -586,7 +630,6 @@ if __name__ == "__main__":
         time.sleep(1)
     except: pass
     
-    # التأكد من إنشاء المجلد قبل بدء البوت
     os.makedirs(DATA_DIR, exist_ok=True)
 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
