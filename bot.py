@@ -607,25 +607,48 @@ def test_link_cmd(message):
     try:
         import random
         url = message.text.split()[1]
+        
+        # تصحيح لو الرابط مبدوء بحرف كبير H
+        if url.startswith("Https"):
+            url = "https" + url[5:]
+            
+        msg_wait = bot.reply_to(message, f"🔄 جاري الفحص المزدوج للرابط...", parse_mode="Markdown")
+        
+        # 1. فحص مباشر (Direct)
+        try:
+            # إضافة Referer وهمي لمحاولة تخطي الحماية
+            headers = {"Referer": "https://shahidtv.net/"}
+            res_direct = curl_requests.get(
+                url, impersonate="chrome", timeout=10, stream=True, verify=False, headers=headers
+            )
+            d_status = res_direct.status_code
+            d_type = res_direct.headers.get("Content-Type", "غير معروف")
+        except Exception as e:
+            d_status = f"خطأ: {str(e)[:50]}"
+            d_type = "-"
+            
+        # 2. فحص عبر الـ Worker
         worker = random.choice(CF_WORKERS)
-        msg_wait = bot.reply_to(message, f"🔄 جاري فحص الرابط عبر Worker عشوائي...\n`{worker}`", parse_mode="Markdown")
         test_url = f"{worker}{quote(url, safe='')}"
+        try:
+            res_worker = curl_requests.get(
+                test_url, impersonate="chrome", timeout=10, stream=True, verify=False
+            )
+            w_status = res_worker.status_code
+            w_type = res_worker.headers.get("Content-Type", "غير معروف")
+        except Exception as e:
+            w_status = f"خطأ: {str(e)[:50]}"
+            w_type = "-"
+            
+        msg = f"📊 **نتيجة الفحص المزدوج:**\n\n"
+        msg += f"🌐 **فحص مباشر (بدون Worker):**\nStatus: `{d_status}`\nType: `{d_type}`\n\n"
+        msg += f"🤖 **فحص عبر الـ Worker:**\nStatus: `{w_status}`\nType: `{w_type}`"
         
-        response = curl_requests.get(
-            test_url,
-            impersonate="chrome",
-            timeout=10,
-            stream=True,
-            verify=False
-        )
-        status = response.status_code
-        c_type = response.headers.get("Content-Type", "غير معروف")
-        
-        msg = f"📊 **نتيجة الفحص عبر الـ Worker:**\nStatus Code: `{status}`\nContent-Type: `{c_type}`"
-        if status == 200:
-            msg += "\n\n✅ **نجاح تام! الـ Worker تخطى الحظر وقرأ الملف بنجاح!**"
+        if d_status == 200 or w_status == 200:
+            msg += "\n\n✅ **يوجد اتصال ناجح!** (أحدهما يعمل)"
         else:
-            msg += f"\n\n⚠️ رد بـ {status}"
+            msg += "\n\n⚠️ **كلاهما فشل!** الموقع يضع حماية قوية ويحظر الطلبات."
+            
         bot.edit_message_text(msg, message.chat.id, msg_wait.message_id, parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
