@@ -120,23 +120,28 @@ def check_link(original_url):
             test_url,
             impersonate="chrome",
             timeout=10,
-            stream=True,
+            stream=True, # Note: using GET with stream=True is a bit like HEAD but gets body if we don't close. Let's stick to it but it might be heavy.
             verify=False
         )
         content_type = response.headers.get("Content-Type", "").lower()
         content_length = response.headers.get("Content-Length")
         
-        valid_types = ["video/", "application/octet-stream", "application/force-download", "application/x-download"]
+        # توسيع أنواع المحتوى المقبولة لضمان عدم تخطي روابط صالحة
+        valid_types = ["video/", "application/octet-stream", "application/force-download", "application/x-download", "text/plain"] 
         has_video_type = not content_type or any(t in content_type for t in valid_types)
         
         if response.status_code != 200 or not has_video_type: 
+            # اطبع الاستجابة للمساعدة في التصحيح
+            print(f"[DEBUG] check_link failed for {original_url} | Status: {response.status_code} | Type: {content_type}", flush=True)
             return False
             
-        if content_length and content_length.isdigit() and int(content_length) < 100_000: 
-            return False
+        # إزالة شرط الحجم لأنه أحياناً لا يتم إرساله أو يكون السيرفر يرسل مقاطع مجزأة
+        # if content_length and content_length.isdigit() and int(content_length) < 100_000: 
+        #     return False
             
         return True
     except Exception as e:
+        print(f"[DEBUG] Exception in check_link for {original_url}: {e}", flush=True)
         return False
 
 def is_time_to_scan(info):
