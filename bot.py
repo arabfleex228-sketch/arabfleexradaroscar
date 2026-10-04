@@ -26,7 +26,7 @@ DATA_FILE = os.path.join(DATA_DIR, "series.json")
 # الفحص كل 5 دقائق
 CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "300"))
 # أقصى مدة لمراقبة الحلقة لتجميع باقي الجودات (بالثواني) - محددة هنا بساعة (3600 ثانية)
-MAX_TRACKING_TIME_SECONDS = 3600 
+MAX_TRACKING_TIME_SECONDS = 3600
 
 SOURCE_DOMAINS = ["b2.shahidtv.net", "b1.shahidtv.net", "b3.shahidtv.net"]
 
@@ -92,19 +92,21 @@ def candidate_urls_wrestling(slug, date_str):
             for suffix in suffixes[quality]:
                 yield quality, f"https://{domain}/files/wrestling/{slug}/{slug}-{date_str}{suffix}"
 
+# === التعديل تم هنا ليدعم كل الجودات في مرحلة الاستكشاف ===
 def probe_urls_series(slug, season, episode, region):
     domain = "b2.shahidtv.net"
     regions = list(dict.fromkeys([region, "EG"]))
     episode_codes = [f"EP{episode:03d}", f"EP{episode:02d}"]
-    suffixes = ["-480p.mp4", "-480p-v2.mp4"]
+    suffixes = ["-480p.mp4", "-720p.mp4", "-1080p.mp4", "-360p.mp4", "-480p-v2.mp4", "-720p-v2.mp4"]
     for r in regions:
         for ep_code in episode_codes:
             for suffix in suffixes:
                 yield f"https://{domain}/files/{r}/{slug}/{slug}-S{season:02d}-{ep_code}{suffix}"
 
+# === التعديل تم هنا للمصارعة أيضاً ===
 def probe_urls_wrestling(slug, date_str):
     domain = "b2.shahidtv.net"
-    suffixes = ["-480p.mp4", "-480p-v2.mp4"]
+    suffixes = ["-480p.mp4", "-720p.mp4", "-1080p.mp4", "-360p.mp4", "-480p-v2.mp4", "-720p-v2.mp4"]
     for suffix in suffixes:
         yield f"https://{domain}/files/wrestling/{slug}/{slug}-{date_str}{suffix}"
 
