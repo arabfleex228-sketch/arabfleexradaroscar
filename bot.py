@@ -112,34 +112,53 @@ def probe_urls_wrestling(slug, date_str):
 
 def check_link(original_url):
     import random
+    
+    # الهيدرز الضرورية لتخطي حماية Hotlink
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Referer": "https://shahidtv.net/",
+        "Origin": "https://shahidtv.net",
+        "Accept-Language": "ar,en-US;q=0.9,en;q=0.8"
+    }
+
     try:
+        # 1. المحاولة الأولى: طلب مباشر (قوي جداً مع curl_cffi وإصدار متصفح محدد)
+        try:
+            res_direct = curl_requests.get(
+                original_url,
+                impersonate="chrome120", # تحديد نسخة كروم محددة لتخطي Cloudflare
+                timeout=10,
+                stream=True,
+                verify=False,
+                headers=headers
+            )
+            
+            if res_direct.status_code == 200:
+                return True
+        except:
+            pass
+
+        # 2. المحاولة الثانية: عبر الـ Worker (لو المباشر فشل)
         worker = random.choice(CF_WORKERS)
         test_url = f"{worker}{quote(original_url, safe='')}"
         
-        response = curl_requests.get(
-            test_url,
-            impersonate="chrome",
-            timeout=10,
-            stream=True, # Note: using GET with stream=True is a bit like HEAD but gets body if we don't close. Let's stick to it but it might be heavy.
-            verify=False
-        )
-        content_type = response.headers.get("Content-Type", "").lower()
-        content_length = response.headers.get("Content-Length")
-        
-        # توسيع أنواع المحتوى المقبولة لضمان عدم تخطي روابط صالحة
-        valid_types = ["video/", "application/octet-stream", "application/force-download", "application/x-download", "text/plain"] 
-        has_video_type = not content_type or any(t in content_type for t in valid_types)
-        
-        if response.status_code != 200 or not has_video_type: 
-            # اطبع الاستجابة للمساعدة في التصحيح
-            print(f"[DEBUG] check_link failed for {original_url} | Status: {response.status_code} | Type: {content_type}", flush=True)
-            return False
+        try:
+            res_worker = curl_requests.get(
+                test_url,
+                impersonate="chrome120",
+                timeout=10,
+                stream=True,
+                verify=False,
+                headers=headers
+            )
             
-        # إزالة شرط الحجم لأنه أحياناً لا يتم إرساله أو يكون السيرفر يرسل مقاطع مجزأة
-        # if content_length and content_length.isdigit() and int(content_length) < 100_000: 
-        #     return False
+            if res_worker.status_code == 200:
+                return True
+        except:
+            pass
             
-        return True
+        return False
     except Exception as e:
         print(f"[DEBUG] Exception in check_link for {original_url}: {e}", flush=True)
         return False
@@ -608,18 +627,23 @@ def test_link_cmd(message):
         import random
         url = message.text.split()[1]
         
-        # تصحيح لو الرابط مبدوء بحرف كبير H
         if url.startswith("Https"):
             url = "https" + url[5:]
             
-        msg_wait = bot.reply_to(message, f"🔄 جاري الفحص المزدوج للرابط...", parse_mode="Markdown")
+        msg_wait = bot.reply_to(message, f"🔄 جاري الفحص المزدوج للرابط (مع تخطي الحماية)...", parse_mode="Markdown")
         
-        # 1. فحص مباشر (Direct)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Referer": "https://shahidtv.net/",
+            "Origin": "https://shahidtv.net",
+            "Accept-Language": "ar,en-US;q=0.9,en;q=0.8"
+        }
+        
+        # 1. فحص مباشر
         try:
-            # إضافة Referer وهمي لمحاولة تخطي الحماية
-            headers = {"Referer": "https://shahidtv.net/"}
             res_direct = curl_requests.get(
-                url, impersonate="chrome", timeout=10, stream=True, verify=False, headers=headers
+                url, impersonate="chrome120", timeout=10, stream=True, verify=False, headers=headers
             )
             d_status = res_direct.status_code
             d_type = res_direct.headers.get("Content-Type", "غير معروف")
@@ -632,7 +656,7 @@ def test_link_cmd(message):
         test_url = f"{worker}{quote(url, safe='')}"
         try:
             res_worker = curl_requests.get(
-                test_url, impersonate="chrome", timeout=10, stream=True, verify=False
+                test_url, impersonate="chrome120", timeout=10, stream=True, verify=False, headers=headers
             )
             w_status = res_worker.status_code
             w_type = res_worker.headers.get("Content-Type", "غير معروف")
@@ -645,7 +669,7 @@ def test_link_cmd(message):
         msg += f"🤖 **فحص عبر الـ Worker:**\nStatus: `{w_status}`\nType: `{w_type}`"
         
         if d_status == 200 or w_status == 200:
-            msg += "\n\n✅ **يوجد اتصال ناجح!** (أحدهما يعمل)"
+            msg += "\n\n✅ **يوجد اتصال ناجح!** (تم تخطي الحماية)"
         else:
             msg += "\n\n⚠️ **كلاهما فشل!** الموقع يضع حماية قوية ويحظر الطلبات."
             
