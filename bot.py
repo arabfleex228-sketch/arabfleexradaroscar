@@ -15,7 +15,6 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import schedule
 from bs4 import BeautifulSoup
 
-# تعطيل تحذيرات SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BOT_TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY"
@@ -97,22 +96,30 @@ def get_laroza_ep(current_url, target_ep):
     soup = BeautifulSoup(html, 'html.parser')
     
     target_url = None
-    # 1. فحص قائمة Select
-    for option in soup.find_all('option'):
-        text = option.text.strip()
-        if f"الحلقة {target_ep}" == text or f"حلقة {target_ep}" == text:
-            val = option.get('value')
-            if val and val != "select-ep":
-                target_url = urljoin(current_url, val)
-                break
-                
-    # 2. فحص أزرار الحلقات
+    
+    # 1. فحص أزرار الحلقات
+    for a in soup.select('.SeasonsEpisodes a'):
+        em = a.find('em')
+        if em and em.text.strip() == str(target_ep):
+            target_url = urljoin(current_url, a.get('href'))
+            break
+
+    # 2. فحص قائمة Select
     if not target_url:
-        for a in soup.select('.SeasonsEpisodes a'):
-            em = a.find('em')
-            if em and em.text.strip() == str(target_ep):
-                target_url = urljoin(current_url, a.get('href'))
-                break
+        for option in soup.find_all('option'):
+            text = option.text.strip()
+            if f"الحلقة {target_ep}" in text or f"حلقة {target_ep}" in text:
+                val = option.get('value')
+                if val and val != "select-ep":
+                    target_url = urljoin(current_url, val)
+                    break
+                    
+    qs = parse_qs(urlparse(current_url).query)
+    current_vid = qs.get('vid', [None])[0]
+    
+    # لو ملقاش الحلقة المطلوبة، بس الرابط الحالي هو نفس الحلقة المطلوبة (في حالة الفحص الأولي لمنع الحلقات الوهمية)
+    if not target_url and current_vid and "video.php" in current_url:
+        target_url = current_url
                 
     if not target_url: return None
     vid = extract_vid(target_url)
@@ -135,9 +142,6 @@ def get_laroza_ep(current_url, target_ep):
     for li in dl_soup.select('ul.downloadlist li'):
         u = li.get('data-download-url')
         if u: down_urls.append(u)
-    for a in dl_soup.select('.download-item a.download-link'):
-        u = a.get('href')
-        if u and 'javascript' not in u: down_urls.append(u)
         
     return {"url": target_url, "watch_urls": watch_urls, "down_urls": down_urls}
 
@@ -152,6 +156,13 @@ def get_qdrama_ep(current_url, target_ep):
         if em and em.text.strip() == str(target_ep):
             target_url = urljoin(current_url, a.get('href'))
             break
+            
+    qs = parse_qs(urlparse(current_url).query)
+    current_vid = qs.get('vid', [None])[0]
+    
+    # في حالة الفحص الأولي لمنع الحلقات الوهمية
+    if not target_url and current_vid and "watch.php" in current_url:
+        target_url = current_url
             
     if not target_url: return None
     vid = extract_vid(target_url)
@@ -197,22 +208,23 @@ def select_servers(watch_urls, down_urls):
         if pool: return pool.pop(0)
         return ""
 
-    # توزيع سيرفرات المشاهدة حسب الأولوية
+    # توزيع سيرفرات المشاهدة الـ 4 حسب الأولوية
     w1 = pop_match(w_pool, ['uqload', 'liiivideo', 'okhd'])
     w2 = pop_match(w_pool, ['vidspeed'])
     w3 = pop_match(w_pool, ['rty', 'ok.ru', 'vk.com', 'anafast', 'vidmoly'])
     w4 = pop_match(w_pool, ['rty', 'ok.ru', 'vk.com', 'anafast', 'vidmoly'])
     
-    # سد الخانات الفارغة بأي سيرفرات متبقية
+    # سد الخانات الفارغة بأي سيرفرات مشاهدة متبقية
     if not w1 and w_pool: w1 = w_pool.pop(0)
     if not w2 and w_pool: w2 = w_pool.pop(0)
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
-    # توزيع سيرفرات التحميل حسب الأولوية
+    # توزيع سيرفرات التحميل الـ 2 حسب الأولوية
     d1 = pop_match(d_pool, ['1cloud', 'liiivideo'])
     d2 = pop_match(d_pool, ['voe', 'uqload'])
     
+    # سد الخانات الفارغة بأي سيرفرات تحميل متبقية
     if not d1 and d_pool: d1 = d_pool.pop(0)
     if not d2 and d_pool: d2 = d_pool.pop(0)
 
@@ -245,7 +257,7 @@ def scan_item(slug, info, is_manual=False):
     if info.get("laroza_url") and not tracking["laroza_done"]:
         res = get_laroza_ep(info["laroza_url"], target_ep)
         if res and res["watch_urls"]:
-            # فحص الحلقة الوهمية
+            # فحص الحلقة الوهمية (إذا كانت سيرفرات الحلقة الجديدة مطابقة للحلقة القديمة)
             if set(res["watch_urls"]) == set(info.get("laroza_last_servers", [])):
                 pass # حلقة وهمية
             else:
@@ -271,7 +283,7 @@ def scan_item(slug, info, is_manual=False):
                 info["qdrama_last_servers"] = res["watch_urls"]
                 new_discovery = True
                 
-    # 3. في حالة إيجاد جديد من أي موقع
+    # 3. إرسال البيانات للـ API في حالة اكتشاف جديد
     if new_discovery:
         if tracking["status"] == "waiting":
             action = "insert"
@@ -290,7 +302,6 @@ def scan_item(slug, info, is_manual=False):
         }
         
         try:
-            # ارسال السيرفرات لقاعدة البيانات
             api_res = requests.post(API_URL, data=payload, timeout=30, verify=False)
             safe_api_status = html.escape(api_res.text[:50])
         except Exception as e:
@@ -416,17 +427,29 @@ def add_step_id(message, title):
 def add_step_last_ep(message, title, series_id):
     try: last_ep = int(message.text.strip())
     except: return bot.reply_to(message, "❌ يجب أن يكون رقماً.")
-    msg = bot.reply_to(message, "🔗 <b>أرسل رابط آخر حلقة من موقع لاروزا</b>\n(لو مش هتراقب لاروزا للمسلسل ده، اكتب <code>تخطي</code>):", parse_mode="HTML")
+    msg = bot.reply_to(message, "🔗 <b>أرسل رابط آخر حلقة من موقع لاروزا</b>\n(الرابط لازم يكون لصفحة فيديو الحلقة <code>video.php</code> وليس المسلسل)\nلو مش هتراقب لاروزا للمسلسل ده، اكتب <code>تخطي</code>:", parse_mode="HTML")
     bot.register_next_step_handler(msg, add_step_laroza, title, series_id, last_ep)
 
 def add_step_laroza(message, title, series_id, last_ep):
     laroza_url = message.text.strip()
+    # التأكد من إدخال رابط حلقة صحيح
+    if laroza_url != "تخطي" and "video.php" not in laroza_url:
+        msg = bot.reply_to(message, "❌ الرابط ده بتاع المسلسل نفسه مش الحلقة!\nأرجوك افتح صفحة <b>آخر حلقة</b> (اللي بيكون فيها المشاهدة واسمها video.php) وابعتهالي تاني\nأو اكتب <code>تخطي</code>", parse_mode="HTML")
+        bot.register_next_step_handler(msg, add_step_laroza, title, series_id, last_ep)
+        return
+        
     if laroza_url == "تخطي": laroza_url = ""
-    msg = bot.reply_to(message, "🔗 <b>أرسل رابط آخر حلقة من موقع كيو دراما</b>\n(لو مش هتراقب كيو دراما، اكتب <code>تخطي</code>):", parse_mode="HTML")
+    msg = bot.reply_to(message, "🔗 <b>أرسل رابط آخر حلقة من موقع كيو دراما</b>\n(الرابط لازم يكون لصفحة الحلقة <code>watch.php</code>)\nلو مش هتراقب كيو دراما، اكتب <code>تخطي</code>:", parse_mode="HTML")
     bot.register_next_step_handler(msg, add_step_qdrama, title, series_id, last_ep, laroza_url)
 
 def add_step_qdrama(message, title, series_id, last_ep, laroza_url):
     qdrama_url = message.text.strip()
+    
+    if qdrama_url != "تخطي" and "watch.php" not in qdrama_url:
+        msg = bot.reply_to(message, "❌ الرابط ده بتاع المسلسل نفسه مش الحلقة!\nأرجوك افتح صفحة <b>آخر حلقة</b> (اللي بيكون واسمها watch.php) وابعتهالي تاني\nأو اكتب <code>تخطي</code>", parse_mode="HTML")
+        bot.register_next_step_handler(msg, add_step_qdrama, title, series_id, last_ep, laroza_url)
+        return
+        
     if qdrama_url == "تخطي": qdrama_url = ""
     
     if not laroza_url and not qdrama_url:
