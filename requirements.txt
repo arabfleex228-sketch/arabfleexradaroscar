@@ -1,5 +1,5 @@
 pyTelegramBotAPI
 requests
-pycryptodome
 curl_cffi
+beautifulsoup4
 schedule
