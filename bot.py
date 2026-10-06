@@ -3,7 +3,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs, urljoin
 
 import requests
@@ -37,7 +37,7 @@ last_scan_at = None
 scan_cycles = 0
 total_added = 0
 
-# دي القائمة اللي بتمنع البوت يتخدع في لاروزا!
+# قائمة حظر سيرفرات الإعلانات والروابط الوهمية
 BANNED_SERVERS = ['fembed', 'nitro', 'streamtape', 'arabseed', 'wecima']
 
 def load_series_data():
@@ -89,7 +89,7 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # ترتيب المشاهدة: liiivideo ثم uqload
+    # ترتيب المشاهدة المخصص: liiivideo ثم uqload
     w1 = pop_match(w_pool, ['liiivideo', 'livideo'])
     if not w1: w1 = pop_match(w_pool, ['uqload'])
 
@@ -104,7 +104,7 @@ def select_servers(watch_urls, down_urls):
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
-    # ترتيب التحميل: liiivideo ثم uqload
+    # ترتيب التحميل المخصص: liiivideo ثم uqload
     d1 = pop_match(d_pool, ['liiivideo', 'livideo'])
     if not d1: d1 = pop_match(d_pool, ['1cloud'])
 
@@ -122,7 +122,6 @@ def get_laroza_ep(current_url, target_ep):
     soup = BeautifulSoup(html_content, 'html.parser')
     
     target_url = None
-    
     for a in soup.select('.SeasonsEpisodes a'):
         em = a.find('em')
         if em and em.text.strip() == str(target_ep):
@@ -155,10 +154,10 @@ def get_laroza_ep(current_url, target_ep):
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
     down_urls = [li.get('data-download-url') for li in dl_soup.select('ul.downloadlist li') if li.get('data-download-url')]
         
-    # هنا بيتم تطبيق الفلتر! لو الروابط كلها fembed هتتحذف.
+    # فلترة الروابط (استبعاد fembed وغيرها)
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     
-    # لو القائمة بقت فاضية بعد الفلتر، دي حلقة وهمية.
+    # الدرع الواقي: إذا لم نجد روابط تحميل صالحة، إذن هي حلقة وهمية
     if not valid_downs: return None
 
     return {"url": target_url, "watch_urls": watch_urls, "down_urls": valid_downs}
@@ -200,6 +199,8 @@ def get_qdrama_ep(current_url, target_ep):
     down_urls = [a.get('href') for a in dl_soup.select('.download-servers-container a.download-btn, .special-download a.special-btn') if a.get('href')]
         
     valid_downs = [u for u in down_urls if is_valid_url(u)]
+    
+    # الدرع الواقي: إذا لم نجد روابط تحميل صالحة، إذن هي حلقة وهمية
     if not valid_downs: return None
         
     return {"url": target_url, "watch_urls": watch_urls, "down_urls": valid_downs}
@@ -221,6 +222,7 @@ def scan_item(slug, info):
     tracking = info["tracking"]
     new_discovery = False
     
+    # فحص لاروزا
     if info.get("laroza_url") and not tracking["laroza_done"]:
         res = get_laroza_ep(info["laroza_url"], target_ep)
         if res:
@@ -230,6 +232,7 @@ def scan_item(slug, info):
             tracking["laroza_new_url"] = res["url"]
             new_discovery = True
 
+    # فحص كيو دراما
     if info.get("qdrama_url") and not tracking["qdrama_done"]:
         res = get_qdrama_ep(info["qdrama_url"], target_ep)
         if res:
@@ -360,7 +363,7 @@ def add_step_qdrama(message, title, series_id, last_ep, laroza_url):
         "laroza_url": laroza_url, "qdrama_url": qdrama_url
     }
     save_series_data(data)
-    bot.reply_to(message, "✅ تمت إضافة المسلسل بنجاح!\nالبوت مستعد لمراقبة الحلقة القادمة.", parse_mode="HTML")
+    bot.reply_to(message, f"✅ تمت إضافة المسلسل بنجاح!\nالبوت مستعد لمراقبة حلقة {last_ep + 1}.", parse_mode="HTML")
 
 @bot.message_handler(commands=["status", "list"])
 def list_items(message):
@@ -399,10 +402,11 @@ def process_delete_callback(call):
     slug = call.data.split('del_')[1]
     data = load_series_data()
     if slug in data:
+        title = data[slug].get("title", slug)
         del data[slug]
         save_series_data(data)
-        bot.answer_callback_query(call.id, "✅ تم الحذف بنجاح!")
-        try: bot.edit_message_text(f"✅ تم الحذف.", call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, f"✅ تم حذف {title}")
+        try: bot.edit_message_text(f"✅ تم حذف مسلسل: {title}", call.message.chat.id, call.message.message_id)
         except: pass
     else:
         bot.answer_callback_query(call.id, "❌ غير موجود.")
@@ -413,6 +417,8 @@ def backup_data(message):
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "rb") as f:
             bot.send_document(message.chat.id, f, caption="✅ <b>نسخة احتياطية (series.json)</b>", parse_mode="HTML")
+    else:
+        bot.reply_to(message, "❌ لا يوجد ملف بيانات حالياً.")
 
 @bot.message_handler(commands=["restore"])
 def restore_data_step(message):
@@ -426,8 +432,10 @@ def process_restore(message):
             file_info = bot.get_file(message.document.file_id)
             dl_file = bot.download_file(file_info.file_path)
             save_series_data(json.loads(dl_file.decode('utf-8')))
-            bot.reply_to(message, "✅ تمت الاستعادة!")
-    except Exception as e: bot.reply_to(message, f"❌ خطأ: {e}")
+            bot.reply_to(message, "✅ تمت الاستعادة بنجاح!")
+        else:
+            bot.reply_to(message, "❌ يجب إرسال ملف كـ Document.")
+    except Exception as e: bot.reply_to(message, f"❌ خطأ في الاستعادة: {e}")
 
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
