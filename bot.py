@@ -25,7 +25,6 @@ DATA_FILE = os.path.join(DATA_DIR, "series.json")
 
 # الفحص كل دقيقتين ونص (150 ثانية)
 CHECK_INTERVAL_SECONDS = 150
-# أقصى مدة لمراقبة الحلقة لتجميع المصدرين (ساعة)
 MAX_TRACKING_TIME_SECONDS = 3600 
 
 API_URL = "https://arabfleex.live/api_bot.php"
@@ -38,7 +37,7 @@ last_scan_at = None
 scan_cycles = 0
 total_added = 0
 
-# سيرفرات محظورة (إعلانات أو غير مرغوب فيها)
+# دي القائمة اللي بتمنع البوت يتخدع في لاروزا!
 BANNED_SERVERS = ['fembed', 'nitro', 'streamtape', 'arabseed', 'wecima']
 
 def load_series_data():
@@ -77,7 +76,6 @@ def is_valid_url(url):
     return True
 
 def select_servers(watch_urls, down_urls):
-    # فلترة السيرفرات المحظورة وإزالة التكرار
     seen = set()
     w_pool = [x for x in watch_urls if is_valid_url(x) and not (x in seen or seen.add(x))]
     seen = set()
@@ -91,9 +89,7 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # ترتيب المشاهدة المخصص: 
-    # الخانة 1 لـ liiivideo ثم uqload
-    # الخانة 2 لـ uqload ثم vidspeed
+    # ترتيب المشاهدة: liiivideo ثم uqload
     w1 = pop_match(w_pool, ['liiivideo', 'livideo'])
     if not w1: w1 = pop_match(w_pool, ['uqload'])
 
@@ -108,7 +104,7 @@ def select_servers(watch_urls, down_urls):
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
-    # ترتيب التحميل: liiivideo/1cloud ثم uqload/voe
+    # ترتيب التحميل: liiivideo ثم uqload
     d1 = pop_match(d_pool, ['liiivideo', 'livideo'])
     if not d1: d1 = pop_match(d_pool, ['1cloud'])
 
@@ -127,14 +123,12 @@ def get_laroza_ep(current_url, target_ep):
     
     target_url = None
     
-    # فحص أزرار الحلقات (التالي)
     for a in soup.select('.SeasonsEpisodes a'):
         em = a.find('em')
         if em and em.text.strip() == str(target_ep):
             target_url = urljoin(current_url, a.get('href'))
             break
 
-    # فحص قائمة Select
     if not target_url:
         for option in soup.find_all('option'):
             text = option.text.strip()
@@ -151,22 +145,20 @@ def get_laroza_ep(current_url, target_ep):
     vid = extract_vid(target_url)
     if not vid: return None
     
-    # جلب المشاهدة
     play_url = urljoin(target_url, f"/play.php?vid={vid}")
     play_html = fetch_html(play_url)
     play_soup = BeautifulSoup(play_html, 'html.parser')
     watch_urls = [li.get('data-embed-url') for li in play_soup.select('ul.WatchList li') if li.get('data-embed-url')]
         
-    # جلب التحميل
     dl_url = urljoin(target_url, f"/download.php?vid={vid}")
     dl_html = fetch_html(dl_url)
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
     down_urls = [li.get('data-download-url') for li in dl_soup.select('ul.downloadlist li') if li.get('data-download-url')]
         
-    # فلترة التحميل من الزبالة (fembed, nitro) عشان نكشف الحلقة الوهمية
+    # هنا بيتم تطبيق الفلتر! لو الروابط كلها fembed هتتحذف.
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     
-    # لو مفيش ولا سيرفر تحميل حقيقي، دي حلقة وهمية!
+    # لو القائمة بقت فاضية بعد الفلتر، دي حلقة وهمية.
     if not valid_downs: return None
 
     return {"url": target_url, "watch_urls": watch_urls, "down_urls": valid_downs}
@@ -190,7 +182,6 @@ def get_qdrama_ep(current_url, target_ep):
     vid = extract_vid(target_url)
     if not vid: return None
     
-    # جلب المشاهدة
     play_url = urljoin(target_url, f"/play.php?vid={vid}")
     play_html = fetch_html(play_url)
     watch_urls = []
@@ -203,7 +194,6 @@ def get_qdrama_ep(current_url, target_ep):
                 if src_match: watch_urls.append(src_match.group(1).replace('\\/', '/'))
         except: pass
             
-    # جلب التحميل
     dl_url = urljoin(target_url, f"/download.php?vid={vid}")
     dl_html = fetch_html(dl_url)
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
@@ -231,7 +221,6 @@ def scan_item(slug, info):
     tracking = info["tracking"]
     new_discovery = False
     
-    # فحص لاروزا
     if info.get("laroza_url") and not tracking["laroza_done"]:
         res = get_laroza_ep(info["laroza_url"], target_ep)
         if res:
@@ -241,7 +230,6 @@ def scan_item(slug, info):
             tracking["laroza_new_url"] = res["url"]
             new_discovery = True
 
-    # فحص كيو دراما
     if info.get("qdrama_url") and not tracking["qdrama_done"]:
         res = get_qdrama_ep(info["qdrama_url"], target_ep)
         if res:
@@ -414,7 +402,7 @@ def process_delete_callback(call):
         del data[slug]
         save_series_data(data)
         bot.answer_callback_query(call.id, "✅ تم الحذف بنجاح!")
-        try: bot.edit_message_text(f"✅ تم حذف المسلسل بنجاح.", call.message.chat.id, call.message.message_id)
+        try: bot.edit_message_text(f"✅ تم الحذف.", call.message.chat.id, call.message.message_id)
         except: pass
     else:
         bot.answer_callback_query(call.id, "❌ غير موجود.")
