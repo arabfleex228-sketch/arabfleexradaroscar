@@ -61,7 +61,6 @@ def send_telegram_msg(msg):
 
 def fetch_html(url):
     try:
-        # استخدام curl_cffi لتخطي حمايات Cloudflare بسهولة
         res = curl_requests.get(url, impersonate="chrome", timeout=15, verify=False)
         return res.text
     except: return ""
@@ -117,7 +116,6 @@ def get_laroza_ep(current_url, target_ep):
     qs = parse_qs(urlparse(current_url).query)
     current_vid = qs.get('vid', [None])[0]
     
-    # لو ملقاش الحلقة المطلوبة، بس الرابط الحالي هو نفس الحلقة المطلوبة (في حالة الفحص الأولي لمنع الحلقات الوهمية)
     if not target_url and current_vid and "video.php" in current_url:
         target_url = current_url
                 
@@ -160,7 +158,6 @@ def get_qdrama_ep(current_url, target_ep):
     qs = parse_qs(urlparse(current_url).query)
     current_vid = qs.get('vid', [None])[0]
     
-    # في حالة الفحص الأولي لمنع الحلقات الوهمية
     if not target_url and current_vid and "watch.php" in current_url:
         target_url = current_url
             
@@ -193,7 +190,6 @@ def get_qdrama_ep(current_url, target_ep):
     return {"url": target_url, "watch_urls": watch_urls, "down_urls": down_urls}
 
 def select_servers(watch_urls, down_urls):
-    # إزالة التكرار مع الحفاظ على الترتيب التقريبي
     seen = set()
     w_pool = [x for x in watch_urls if not (x in seen or seen.add(x))]
     seen = set()
@@ -205,26 +201,22 @@ def select_servers(watch_urls, down_urls):
                 if kw.lower() in url.lower():
                     pool.remove(url)
                     return url
-        if pool: return pool.pop(0)
         return ""
 
-    # توزيع سيرفرات المشاهدة الـ 4 حسب الأولوية
-    w1 = pop_match(w_pool, ['uqload', 'liiivideo', 'okhd'])
-    w2 = pop_match(w_pool, ['vidspeed'])
+    # تعديل ترتيب المشاهدة حسب المطلوب
+    w1 = pop_match(w_pool, ['liiivideo', 'uqload'])
+    w2 = pop_match(w_pool, ['uqload', 'vidspeed']) 
     w3 = pop_match(w_pool, ['rty', 'ok.ru', 'vk.com', 'anafast', 'vidmoly'])
     w4 = pop_match(w_pool, ['rty', 'ok.ru', 'vk.com', 'anafast', 'vidmoly'])
     
-    # سد الخانات الفارغة بأي سيرفرات مشاهدة متبقية
     if not w1 and w_pool: w1 = w_pool.pop(0)
     if not w2 and w_pool: w2 = w_pool.pop(0)
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
-    # توزيع سيرفرات التحميل الـ 2 حسب الأولوية
-    d1 = pop_match(d_pool, ['1cloud', 'liiivideo'])
-    d2 = pop_match(d_pool, ['voe', 'uqload'])
+    d1 = pop_match(d_pool, ['liiivideo', '1cloud'])
+    d2 = pop_match(d_pool, ['uqload', 'voe'])
     
-    # سد الخانات الفارغة بأي سيرفرات تحميل متبقية
     if not d1 and d_pool: d1 = d_pool.pop(0)
     if not d2 and d_pool: d2 = d_pool.pop(0)
 
@@ -253,13 +245,11 @@ def scan_item(slug, info, is_manual=False):
     tracking = info["tracking"]
     new_discovery = False
     
-    # 1. فحص لاروزا
     if info.get("laroza_url") and not tracking["laroza_done"]:
         res = get_laroza_ep(info["laroza_url"], target_ep)
         if res and res["watch_urls"]:
-            # فحص الحلقة الوهمية (إذا كانت سيرفرات الحلقة الجديدة مطابقة للحلقة القديمة)
             if set(res["watch_urls"]) == set(info.get("laroza_last_servers", [])):
-                pass # حلقة وهمية
+                pass 
             else:
                 tracking["watch_urls"].extend(res["watch_urls"])
                 tracking["down_urls"].extend(res["down_urls"])
@@ -268,13 +258,11 @@ def scan_item(slug, info, is_manual=False):
                 info["laroza_last_servers"] = res["watch_urls"]
                 new_discovery = True
 
-    # 2. فحص كيو دراما
     if info.get("qdrama_url") and not tracking["qdrama_done"]:
         res = get_qdrama_ep(info["qdrama_url"], target_ep)
         if res and res["watch_urls"]:
-            # فحص الحلقة الوهمية
             if set(res["watch_urls"]) == set(info.get("qdrama_last_servers", [])):
-                pass # حلقة وهمية
+                pass
             else:
                 tracking["watch_urls"].extend(res["watch_urls"])
                 tracking["down_urls"].extend(res["down_urls"])
@@ -283,12 +271,11 @@ def scan_item(slug, info, is_manual=False):
                 info["qdrama_last_servers"] = res["watch_urls"]
                 new_discovery = True
                 
-    # 3. إرسال البيانات للـ API في حالة اكتشاف جديد
     if new_discovery:
         if tracking["status"] == "waiting":
             action = "insert"
             tracking["status"] = "partial"
-            tracking["start_ts"] = time.time() # بدء مؤقت الساعة لانتظار الموقع الآخر
+            tracking["start_ts"] = time.time()
         else:
             action = "update"
             
@@ -323,7 +310,6 @@ def scan_item(slug, info, is_manual=False):
             
         send_telegram_msg(msg)
 
-    # 4. فحص إنهاء المراقبة
     if tracking["status"] != "waiting":
         is_timeout = (time.time() - tracking["start_ts"]) > MAX_TRACKING_TIME_SECONDS
         is_complete = True
@@ -368,7 +354,6 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(1)
 
-# دالة لتسجيل سيرفرات الحلقة الحالية لمنع الحلقات الوهمية
 def cache_initial_servers(slug, info):
     bot.send_message(ADMIN_CHAT_ID, f"⏳ جاري حفظ سيرفرات حلقة {info['last_ep']} للمسلسل [{info['title']}] في الخلفية (لمنع الحلقات الوهمية)...")
     updated = False
@@ -377,7 +362,7 @@ def cache_initial_servers(slug, info):
         res = get_laroza_ep(info['laroza_url'], info['last_ep'])
         if res and res["watch_urls"]:
             info['laroza_last_servers'] = res["watch_urls"]
-            info['laroza_url'] = res["url"] # تحديث الرابط لضمان دقته
+            info['laroza_url'] = res["url"]
             updated = True
             
     if info.get('qdrama_url') and not info.get('qdrama_last_servers'):
@@ -432,7 +417,6 @@ def add_step_last_ep(message, title, series_id):
 
 def add_step_laroza(message, title, series_id, last_ep):
     laroza_url = message.text.strip()
-    # التأكد من إدخال رابط حلقة صحيح
     if laroza_url != "تخطي" and "video.php" not in laroza_url:
         msg = bot.reply_to(message, "❌ الرابط ده بتاع المسلسل نفسه مش الحلقة!\nأرجوك افتح صفحة <b>آخر حلقة</b> (اللي بيكون فيها المشاهدة واسمها video.php) وابعتهالي تاني\nأو اكتب <code>تخطي</code>", parse_mode="HTML")
         bot.register_next_step_handler(msg, add_step_laroza, title, series_id, last_ep)
