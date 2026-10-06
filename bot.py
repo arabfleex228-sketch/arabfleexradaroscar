@@ -9,8 +9,8 @@ import schedule
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
 
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE" # ضع توكن البوت هنا
-ADMIN_ID = 123456789 # ضع الأي دي الخاص بك هنا
+TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY" # ضع توكن البوت هنا
+ADMIN_ID = 1013251619 # ضع الأي دي الخاص بك هنا
 API_URL = "https://arabfleex.xo.je/api.php" # رابط الـ API الخاص بموقعك
 SECRET_KEY = "ArabFleex_2024_SecRet"
 
