@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import re
@@ -25,7 +26,7 @@ DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 DATA_FILE = os.path.join(DATA_DIR, "series.json")
 
 CHECK_INTERVAL_SECONDS = 150
-MAX_TRACKING_TIME_SECONDS = 3600 
+MAX_TRACKING_TIME_SECONDS = 3600
 
 API_URL = "https://arabfleex.live/api_bot.php"
 SECRET_KEY = "ArabFleex_2024_SecRet"
@@ -149,12 +150,13 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # ترتيب المشاهدة المخصص (liiivideo و uqload في الصدارة)
-    w1 = pop_match(w_pool, ['liiivideo', 'livideo'])
+    # الترتيب المحدث للمشاهدة: vidspeed في الصدارة، ثم liiivideo ثم uqload
+    w1 = pop_match(w_pool, ['vidspeed'])
+    if not w1: w1 = pop_match(w_pool, ['liiivideo', 'livideo'])
     if not w1: w1 = pop_match(w_pool, ['uqload'])
 
-    w2 = pop_match(w_pool, ['uqload']) 
-    if not w2: w2 = pop_match(w_pool, ['vidspeed'])
+    w2 = pop_match(w_pool, ['liiivideo', 'livideo'])
+    if not w2: w2 = pop_match(w_pool, ['uqload'])
 
     w3 = pop_match(w_pool, ['rty', 'ok.ru', 'ok', 'vk.com', 'vk', 'anafast', 'vidmoly'])
     w4 = pop_match(w_pool, ['rty', 'ok.ru', 'ok', 'vk.com', 'vk', 'anafast', 'vidmoly'])
@@ -508,7 +510,7 @@ def list_items(message):
     if not data: lines.append("📭 لا توجد عناصر.")
     else:
         for slug, info in data.items():
-            title = info.get("title", slug)
+            title = html.escape(str(info.get("title", slug))) # تنظيف الاسم لحماية التنسيق
             last_ep = info.get("last_ep", 0)
             sources = []
             if info.get("laroza_url"): sources.append("لاروزا")
@@ -529,7 +531,8 @@ def delete_item(message):
     if not data: return bot.reply_to(message, "📭 القائمة فارغة.")
     markup = InlineKeyboardMarkup(row_width=1)
     for slug, info in data.items():
-        markup.add(InlineKeyboardButton(text=f"❌ حذف: {info.get('title', slug)}", callback_data=f"del_{slug}"))
+        title = info.get('title', slug)
+        markup.add(InlineKeyboardButton(text=f"❌ حذف: {title}", callback_data=f"del_{slug}"))
     bot.reply_to(message, "🗑 اختر المسلسل للحذف:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
@@ -558,19 +561,29 @@ def backup_data(message):
 @bot.message_handler(commands=["restore"])
 def restore_data_step(message):
     if str(message.chat.id) != ADMIN_CHAT_ID: return
-    msg = bot.reply_to(message, "📥 <b>أرسل لي ملف series.json:</b>", parse_mode="HTML")
+    msg = bot.reply_to(message, "📥 <b>أرسل لي ملف series.json أو انسخ محتواه كنص هنا:</b>", parse_mode="HTML")
     bot.register_next_step_handler(msg, process_restore)
 
 def process_restore(message):
+    if str(message.chat.id) != ADMIN_CHAT_ID: return
     try:
+        raw_data = ""
         if message.document:
             file_info = bot.get_file(message.document.file_id)
             dl_file = bot.download_file(file_info.file_path)
-            save_series_data(json.loads(dl_file.decode('utf-8')))
-            bot.reply_to(message, "✅ تمت الاستعادة بنجاح!")
+            raw_data = dl_file.decode('utf-8')
+        elif message.text:
+            raw_data = message.text
         else:
-            bot.reply_to(message, "❌ يجب إرسال ملف كـ Document.")
-    except Exception as e: bot.reply_to(message, f"❌ خطأ في الاستعادة: {e}")
+            return bot.reply_to(message, "❌ يجب إرسال ملف كـ Document أو إرسال النص (JSON) مباشرة.")
+            
+        parsed_data = json.loads(raw_data)
+        save_series_data(parsed_data)
+        bot.reply_to(message, "✅ <b>تمت الاستعادة بنجاح!</b>", parse_mode="HTML")
+    except json.JSONDecodeError:
+        bot.reply_to(message, "❌ <b>خطأ:</b> النص المرسل ليس بصيغة JSON صحيحة.", parse_mode="HTML")
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ في الاستعادة: {e}")
 
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
