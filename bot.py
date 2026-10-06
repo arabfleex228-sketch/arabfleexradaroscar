@@ -9,9 +9,9 @@ import schedule
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
 
-TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY" # ضع توكن البوت هنا
-ADMIN_ID = 1013251619 # ضع الأي دي الخاص بك هنا
-API_URL = "https://arabfleex.xo.je/api.php" # رابط الـ API الخاص بموقعك
+TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY" # توكن البوت الخاص بك
+ADMIN_ID = 1013251619 # الأي دي الخاص بك
+API_URL = "https://arabfleex.xo.je/api.php" # رابط الـ API
 SECRET_KEY = "ArabFleex_2024_SecRet"
 
 CHECK_INTERVAL_SECONDS = 150 # الفحص كل دقيقتين ونصف
@@ -151,7 +151,7 @@ def get_laroza_ep(url, target_ep, seen_fps=None):
         res = requests.get(url, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # العثور على الموسم النشط فقط وتجاهل المواسم القديمة المخفية
+        # العثور على الموسم النشط فقط وتجاهل المواسم القديمة المخفية (عزل المواسم)
         active_season_div = None
         for div in soup.find_all('div', class_='SeasonsEpisodes'):
             style = div.get('style', '').replace(' ', '').lower()
@@ -183,7 +183,7 @@ def get_laroza_ep(url, target_ep, seen_fps=None):
         down_urls = []
         new_fps = []
         
-        # استخراج سيرفرات المشاهدة من الـ iframe أو data-embed-url
+        # استخراج سيرفرات المشاهدة
         for li in soup_ep.find_all('li', attrs={"data-embed-url": True}):
             src = li.get('data-embed-url', '')
             if src.startswith("//"): src = "https:" + src
@@ -253,7 +253,7 @@ def get_qdrama_ep(url, target_ep):
                 if href and is_valid_url(href):
                     down_urls.append(href)
                     
-        # الحماية: لو مفيش روابط تحميل = حلقة وهمية/إعلان
+        # الحماية: لو مفيش روابط تحميل = حلقة وهمية
         if not down_urls:
             return None
             
@@ -272,7 +272,6 @@ def check_new_episodes():
         target_ep = info["current_episode"] + 1
         new_discovery = False
         
-        # تهيئة مصفوفة البصمات إذا لم تكن موجودة
         if "laroza_seen_fps" not in info:
             info["laroza_seen_fps"] = []
 
@@ -281,7 +280,7 @@ def check_new_episodes():
             if res:
                 info["watch_urls"].extend(res["watch_urls"])
                 info["down_urls"].extend(res["down_urls"])
-                info["laroza_seen_fps"].extend(res["new_fps"]) # تحديث البصمات
+                info["laroza_seen_fps"].extend(res["new_fps"]) 
                 info["laroza_done"] = True
                 info["laroza_new_url"] = res["url"]
                 new_discovery = True
@@ -299,9 +298,7 @@ def check_new_episodes():
             action = "insert" if info["status"] == "waiting" else "update"
             info["status"] = "partial"
             
-            # تحديد المصدر لمعرفة الترتيب المطلوب
             source = "qdrama" if info["qdrama_done"] else "laroza"
-                
             w1, w2, w3, w4, d1, d2 = select_servers(info["watch_urls"], info["down_urls"], source)
             
             payload = {
@@ -332,7 +329,6 @@ def check_new_episodes():
             except Exception as e:
                 bot.send_message(ADMIN_ID, f"⚠️ خطأ في API للمسلسل {info['series_id']}: {e}")
 
-        # التحقق من اكتمال المصادر أو عدم وجود مصدر آخر
         is_laroza_needed = bool(info.get("laroza_url"))
         is_qdrama_needed = bool(info.get("qdrama_url"))
         
@@ -345,7 +341,6 @@ def check_new_episodes():
                 info["laroza_done"] = False
                 info["qdrama_done"] = False
                 
-                # تحديث روابط البداية للمواسم عشان يكمل منها
                 if info.get("laroza_new_url"): info["laroza_url"] = info["laroza_new_url"]
                 if info.get("qdrama_new_url"): info["qdrama_url"] = info["qdrama_new_url"]
                 
@@ -388,7 +383,6 @@ def add_series(message):
         current_ep = int(parts[3])
         series_id = parts[4]
 
-        # فلترة مبدئية لروابط الإضافة لضمان أنها صحيحة
         if laroza_url and "video.php" not in laroza_url:
             bot.reply_to(message, "❌ رابط لاروزا يجب أن يكون رابط حلقة فعلية (يحتوي على video.php)")
             return
@@ -397,8 +391,7 @@ def add_series(message):
             return
             
         data = load_data()
-        
-        bot.reply_to(message, f"⏳ جاري حفظ سيرفرات حلقة {current_ep} للمسلسل [ID: {series_id}] في الخلفية (لمنع الحلقات الوهمية)...")
+        bot.reply_to(message, f"⏳ جاري حفظ سيرفرات حلقة {current_ep} للمسلسل [ID: {series_id}] في الخلفية...")
         
         laroza_seen_fps = []
         if laroza_url:
@@ -421,7 +414,6 @@ def add_series(message):
             "laroza_seen_fps": laroza_seen_fps
         }
         save_data(data)
-        
         bot.reply_to(message, f"✅ تم الانتهاء من تخزين سيرفرات [ID: {series_id}] بنجاح! البوت مستعد لمراقبة حلقة {current_ep + 1}.")
     except Exception as e:
         bot.reply_to(message, f"حدث خطأ: {str(e)}")
@@ -462,16 +454,14 @@ def list_series(message):
         if v.get('qdrama_url'): sources.append("كيو دراما")
         sources_str = " + ".join(sources) if sources else "لا يوجد"
         
-        # استخدام get لتجنب أي إيرور لو البيانات القديمة ناقصة
         ep = v.get('current_episode', 'غير محدد')
         status = v.get('status', 'جاري المراقبة')
         
         item_text = f"▪️ ID: {k} | الحلقة الحالية: {ep}\n   المصادر: [{sources_str}]\n   الحالة: {status}\n\n"
         
-        # حماية ضد تجاوز طول رسالة تليجرام (4096 حرف)
         if len(text) + len(item_text) > 4000:
             bot.send_message(message.chat.id, text)
-            text = "" # تفريغ النص للرسالة اللي بعدها
+            text = ""
             
         text += item_text
         
@@ -491,13 +481,11 @@ def backup_data(message):
 def restore_data(message):
     if message.chat.id != ADMIN_ID: return
     msg = bot.reply_to(message, "الرجاء إرسال ملف `series.json` الآن، أو قم بنسخ ولصق محتوى الـ JSON مباشرة هنا في رسالة:")
-    # تسجيل الخطوة القادمة لاستقبال الملف أو النص
     bot.register_next_step_handler(msg, process_restore_step)
 
 def process_restore_step(message):
     if message.chat.id != ADMIN_ID: return
     
-    # لو الأدمن حب يلغي العملية
     if message.text and message.text.startswith('/'):
         bot.reply_to(message, "تم إلغاء الاستعادة. للبدء من جديد أرسل /restore")
         return
@@ -505,13 +493,11 @@ def process_restore_step(message):
     try:
         data_to_save = None
         
-        # لو بعت ملف
         if message.document:
             file_info = bot.get_file(message.document.file_id)
             downloaded_file = bot.download_file(file_info.file_path)
             data_to_save = json.loads(downloaded_file.decode('utf-8'))
             
-        # لو بعت النص مباشرة
         elif message.text:
             data_to_save = json.loads(message.text)
             
