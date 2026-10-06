@@ -462,10 +462,21 @@ def list_series(message):
         if v.get('qdrama_url'): sources.append("كيو دراما")
         sources_str = " + ".join(sources) if sources else "لا يوجد"
         
-        text += f"▪️ ID: {k} | الحلقة الحالية: {v['current_episode']}\n"
-        text += f"   المصادر: [{sources_str}]\n"
-        text += f"   الحالة: {v['status']}\n\n"
-    bot.reply_to(message, text)
+        # استخدام get لتجنب أي إيرور لو البيانات القديمة ناقصة
+        ep = v.get('current_episode', 'غير محدد')
+        status = v.get('status', 'جاري المراقبة')
+        
+        item_text = f"▪️ ID: {k} | الحلقة الحالية: {ep}\n   المصادر: [{sources_str}]\n   الحالة: {status}\n\n"
+        
+        # حماية ضد تجاوز طول رسالة تليجرام (4096 حرف)
+        if len(text) + len(item_text) > 4000:
+            bot.send_message(message.chat.id, text)
+            text = "" # تفريغ النص للرسالة اللي بعدها
+            
+        text += item_text
+        
+    if text.strip():
+        bot.send_message(message.chat.id, text)
 
 @bot.message_handler(commands=['backup'])
 def backup_data(message):
