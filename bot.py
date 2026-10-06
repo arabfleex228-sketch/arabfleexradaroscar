@@ -15,6 +15,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import schedule
 from bs4 import BeautifulSoup
 
+# تعطيل تحذيرات SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BOT_TOKEN = "7808630939:AAEY0_q6vnkKlMRjvXNmEXwK1G80hv0vghY"
@@ -23,8 +24,8 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "1013251619")
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 DATA_FILE = os.path.join(DATA_DIR, "series.json")
 
-# الفحص كل 5 دقائق
-CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "300"))
+# الفحص كل دقيقتين ونص (150 ثانية) بناءً على طلبك
+CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "150"))
 # أقصى مدة لمراقبة الحلقة لتجميع المصدرين (ساعة)
 MAX_TRACKING_TIME_SECONDS = 3600 
 
@@ -123,7 +124,7 @@ def get_laroza_ep(current_url, target_ep):
     vid = extract_vid(target_url)
     if not vid: return None
     
-    # جلب سيرفرات المشاهدة
+    # جلب سيرفرات المشاهدة من لاروزا
     play_url = urljoin(target_url, f"/play.php?vid={vid}")
     play_html = fetch_html(play_url)
     play_soup = BeautifulSoup(play_html, 'html.parser')
@@ -132,7 +133,7 @@ def get_laroza_ep(current_url, target_ep):
         u = li.get('data-embed-url')
         if u: watch_urls.append(u)
         
-    # جلب سيرفرات التحميل
+    # جلب سيرفرات التحميل من لاروزا
     dl_url = urljoin(target_url, f"/download.php?vid={vid}")
     dl_html = fetch_html(dl_url)
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
@@ -165,7 +166,7 @@ def get_qdrama_ep(current_url, target_ep):
     vid = extract_vid(target_url)
     if not vid: return None
     
-    # جلب سيرفرات المشاهدة
+    # جلب سيرفرات المشاهدة من كيو دراما
     play_url = urljoin(target_url, f"/play.php?vid={vid}")
     play_html = fetch_html(play_url)
     watch_urls = []
@@ -178,7 +179,7 @@ def get_qdrama_ep(current_url, target_ep):
                 if src_match: watch_urls.append(src_match.group(1).replace('\\/', '/'))
         except: pass
             
-    # جلب سيرفرات التحميل
+    # جلب سيرفرات التحميل من كيو دراما
     dl_url = urljoin(target_url, f"/download.php?vid={vid}")
     dl_html = fetch_html(dl_url)
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
@@ -203,7 +204,7 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # تعديل ترتيب المشاهدة حسب المطلوب
+    # ترتيب المشاهدة: liivideo ثم uqload ثم الباقي
     w1 = pop_match(w_pool, ['liiivideo', 'uqload'])
     w2 = pop_match(w_pool, ['uqload', 'vidspeed']) 
     w3 = pop_match(w_pool, ['rty', 'ok.ru', 'vk.com', 'anafast', 'vidmoly'])
@@ -214,6 +215,7 @@ def select_servers(watch_urls, down_urls):
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
+    # ترتيب التحميل: liiivideo/1cloud ثم uqload/voe
     d1 = pop_match(d_pool, ['liiivideo', '1cloud'])
     d2 = pop_match(d_pool, ['uqload', 'voe'])
     
@@ -390,7 +392,7 @@ def admin_only(message):
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     if admin_only(message):
-        bot.reply_to(message, "🤖 <b>نظام المراقبة (لاروزا + كيو دراما)</b>\n\n🔹 <code>/add</code> — إضافة مسلسل جديد\n🔹 <code>/del</code> — حذف مسلسل\n🔹 <code>/list</code> — قائمة المسلسلات وحالتها\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/scan</code> — فحص يدوي سريع 🚀", parse_mode="HTML")
+        bot.reply_to(message, "🤖 <b>نظام المراقبة (لاروزا + كيو دراما)</b>\n\n🔹 <code>/add</code> — إضافة مسلسل جديد\n🔹 <code>/del</code> — حذف مسلسل\n🔹 <code>/list</code> — قائمة المسلسلات وحالتها\n🔹 <code>/settime</code> — تحديد موعد النزول ⏱\n🔹 <code>/scan</code> — فحص يدوي سريع 🚀\n🔹 <code>/backup</code> — نسخة احتياطية 📥\n🔹 <code>/restore</code> — استعادة البيانات 📤", parse_mode="HTML")
 
 @bot.message_handler(commands=["add"])
 def add_item_start(message):
@@ -457,7 +459,6 @@ def add_step_qdrama(message, title, series_id, last_ep, laroza_url):
 @bot.message_handler(commands=["list", "status", "check"])
 def list_items(message):
     if not admin_only(message): return
-    uptime = (datetime.now(timezone.utc) - started_at).total_seconds()
     data = load_series_data()
     lines = [
         "✅ <b>البوت شغال وبيفحص بانتظام!</b>\n",
@@ -531,6 +532,41 @@ def force_check(message):
             try: bot.send_message(message.chat.id, "✅ <b>تم الفحص!</b>\n\n" + ("\n".join(results)), parse_mode="HTML")
             except: pass
     threading.Thread(target=background_scan, daemon=True).start()
+
+@bot.message_handler(commands=["backup"])
+def backup_data(message):
+    if not admin_only(message): return
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "rb") as f:
+            bot.send_document(message.chat.id, f, caption="✅ <b>نسخة احتياطية (series.json)</b>", parse_mode="HTML")
+    else:
+        bot.reply_to(message, "⚠️ لا توجد بيانات للنسخ.")
+
+@bot.message_handler(commands=["restore"])
+def restore_data_step(message):
+    if not admin_only(message): return
+    msg = bot.reply_to(message, "📥 <b>أرسل لي ملف series.json كرسالة (Document) أو كنص:</b>", parse_mode="HTML")
+    bot.register_next_step_handler(msg, process_restore)
+
+def process_restore(message):
+    if not admin_only(message): return
+    raw_data = ""
+    try:
+        if message.document:
+            file_info = bot.get_file(message.document.file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            raw_data = downloaded_file.decode('utf-8')
+        elif message.text:
+            raw_data = message.text
+        else:
+            bot.reply_to(message, "❌ يرجى إرسال ملف صالح أو نص.")
+            return
+        
+        parsed_data = json.loads(raw_data)
+        save_series_data(parsed_data)
+        bot.reply_to(message, "✅ <b>تمت استعادة البيانات بنجاح!</b>", parse_mode="HTML")
+    except Exception as e:
+        bot.reply_to(message, f"❌ حدث خطأ أثناء الاستعادة: {e}")
 
 if __name__ == "__main__":
     print("Bot is starting...", flush=True)
