@@ -18,6 +18,7 @@ CHECK_INTERVAL_SECONDS = 150 # الفحص كل دقيقتين ونصف
 DATA_FILE = "series.json"
 
 bot = telebot.TeleBot(TOKEN)
+check_cycles = 0 # عداد دورات الفحص
 
 BANNED_SERVERS = ["fembed", "nitro", "streamtape", "arabseed"]
 LAROZA_KNOWN_DOMAINS = [
@@ -205,9 +206,9 @@ def get_laroza_ep(url, target_ep, seen_fps=None):
                     
         # الحماية المزدوجة (التحميل + البصمة)
         if not down_urls:
-            return None # حلقة وهمية - لا يوجد تحميل
+            return None # حلقة وهمية - لا يوجد تحميل نظيف
             
-        # فحص البصمات (Fingerprint)
+        # فحص البصمات (Fingerprint) - لمنع الإعلانات المكررة
         for w in watch_urls:
             fp = extract_video_fingerprint(w)
             if fp:
@@ -253,7 +254,7 @@ def get_qdrama_ep(url, target_ep):
                 if href and is_valid_url(href):
                     down_urls.append(href)
                     
-        # الحماية: لو مفيش روابط تحميل = حلقة وهمية
+        # الحماية: لو مفيش روابط تحميل نظيفة = حلقة وهمية
         if not down_urls:
             return None
             
@@ -263,6 +264,9 @@ def get_qdrama_ep(url, target_ep):
         return None
 
 def check_new_episodes():
+    global check_cycles
+    check_cycles += 1 # زيادة عداد دورات الفحص
+    
     data = load_data()
     changed = False
     
@@ -365,7 +369,7 @@ def send_welcome(message):
 /del - لحذف مسلسل من المراقبة
 /list أو /status - لعرض المسلسلات المراقبة
 /backup - لأخذ نسخة احتياطية من البيانات
-/restore - لاستعادة البيانات من ملف
+/restore - لاستعادة البيانات من ملف أو نص
 """
     bot.reply_to(message, text)
 
@@ -391,7 +395,7 @@ def add_series(message):
             return
             
         data = load_data()
-        bot.reply_to(message, f"⏳ جاري حفظ سيرفرات حلقة {current_ep} للمسلسل [ID: {series_id}] في الخلفية...")
+        bot.reply_to(message, f"⏳ جاري حفظ سيرفرات حلقة {current_ep} للمسلسل [{series_id}] في الخلفية...")
         
         laroza_seen_fps = []
         if laroza_url:
@@ -414,7 +418,7 @@ def add_series(message):
             "laroza_seen_fps": laroza_seen_fps
         }
         save_data(data)
-        bot.reply_to(message, f"✅ تم الانتهاء من تخزين سيرفرات [ID: {series_id}] بنجاح! البوت مستعد لمراقبة حلقة {current_ep + 1}.")
+        bot.reply_to(message, f"✅ تم الانتهاء من تخزين سيرفرات [{series_id}] بنجاح! البوت مستعد لمراقبة حلقة {current_ep + 1}.")
     except Exception as e:
         bot.reply_to(message, f"حدث خطأ: {str(e)}")
 
@@ -433,31 +437,42 @@ def del_series(message):
         if series_id in data:
             del data[series_id]
             save_data(data)
-            bot.reply_to(message, f"✅ تم حذف المسلسل ذو الـ ID {series_id} من المراقبة بنجاح.")
+            bot.reply_to(message, f"✅ تم حذف المسلسل [{series_id}] من المراقبة بنجاح.")
         else:
-            bot.reply_to(message, "❌ هذا الـ ID غير موجود في قائمة المراقبة.")
+            bot.reply_to(message, "❌ هذا المسلسل غير موجود في قائمة المراقبة.")
     except Exception as e:
         bot.reply_to(message, f"حدث خطأ: {str(e)}")
 
 @bot.message_handler(commands=['list', 'status'])
 def list_series(message):
     if message.chat.id != ADMIN_ID: return
+    global check_cycles
     data = load_data()
+    
     if not data:
-        bot.reply_to(message, "لا توجد مسلسلات تحت المراقبة حالياً.")
+        bot.reply_to(message, f"البوت شغال وبيفحص بانتظام! دورات الفحص: {check_cycles}\nلا توجد مسلسلات تحت المراقبة حالياً.")
         return
         
-    text = "📺 المسلسلات تحت المراقبة:\n\n"
+    text = f"البوت شغال وبيفحص بانتظام! دورات الفحص: {check_cycles}\n"
     for k, v in data.items():
         sources = []
         if v.get('laroza_url'): sources.append("لاروزا")
         if v.get('qdrama_url'): sources.append("كيو دراما")
         sources_str = " + ".join(sources) if sources else "لا يوجد"
         
-        ep = v.get('current_episode', 'غير محدد')
-        status = v.get('status', 'جاري المراقبة')
+        ep = v.get('current_episode', '؟')
+        target_ep = int(ep) + 1 if str(ep).isdigit() else '؟'
         
-        item_text = f"▪️ ID: {k} | الحلقة الحالية: {ep}\n   المصادر: [{sources_str}]\n   الحالة: {status}\n\n"
+        raw_status = v.get('status', 'waiting')
+        if raw_status == 'waiting':
+            status_text = "مستعد"
+        elif raw_status == 'partial':
+            status_text = f"بانتظار {target_ep}"
+        else:
+            status_text = raw_status
+            
+        # التنسيق المخصص المطلوب:
+        item_text = f"{k} (حلقة {ep}) | [{sources_str}] | {status_text}\n"
         
         if len(text) + len(item_text) > 4000:
             bot.send_message(message.chat.id, text)
@@ -480,7 +495,7 @@ def backup_data(message):
 @bot.message_handler(commands=['restore'])
 def restore_data(message):
     if message.chat.id != ADMIN_ID: return
-    msg = bot.reply_to(message, "الرجاء إرسال ملف `series.json` الآن، أو قم بنسخ ولصق محتوى الـ JSON مباشرة هنا في رسالة:")
+    msg = bot.reply_to(message, "الرجاء إرسال ملف `series.json` الآن، أو قم بنسخ ولصق الكود (النص) في رسالة هنا:")
     bot.register_next_step_handler(msg, process_restore_step)
 
 def process_restore_step(message):
