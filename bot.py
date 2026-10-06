@@ -204,8 +204,10 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # ترتيب المشاهدة: liivideo ثم uqload ثم الباقي
-    w1 = pop_match(w_pool, ['liiivideo', 'uqload'])
+    # ترتيب المشاهدة المخصص: 
+    # الخانة 1 لـ liiivideo ثم uqload
+    # الخانة 2 لـ uqload ثم vidspeed
+    w1 = pop_match(w_pool, ['liiivideo', 'livideo', 'uqload'])
     w2 = pop_match(w_pool, ['uqload', 'vidspeed']) 
     w3 = pop_match(w_pool, ['rty', 'ok.ru', 'vk.com', 'anafast', 'vidmoly'])
     w4 = pop_match(w_pool, ['rty', 'ok.ru', 'vk.com', 'anafast', 'vidmoly'])
@@ -216,7 +218,7 @@ def select_servers(watch_urls, down_urls):
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
     # ترتيب التحميل: liiivideo/1cloud ثم uqload/voe
-    d1 = pop_match(d_pool, ['liiivideo', '1cloud'])
+    d1 = pop_match(d_pool, ['liiivideo', 'livideo', '1cloud'])
     d2 = pop_match(d_pool, ['uqload', 'voe'])
     
     if not d1 and d_pool: d1 = d_pool.pop(0)
@@ -250,27 +252,27 @@ def scan_item(slug, info, is_manual=False):
     if info.get("laroza_url") and not tracking["laroza_done"]:
         res = get_laroza_ep(info["laroza_url"], target_ep)
         if res and res["watch_urls"]:
-            if set(res["watch_urls"]) == set(info.get("laroza_last_servers", [])):
+            # فحص الذكاء: لو مفيش سيرفرات تحميل، يبقى حلقة وهمية (حجز)
+            if not res["down_urls"]:
                 pass 
             else:
                 tracking["watch_urls"].extend(res["watch_urls"])
                 tracking["down_urls"].extend(res["down_urls"])
                 tracking["laroza_done"] = True
                 tracking["laroza_new_url"] = res["url"]
-                info["laroza_last_servers"] = res["watch_urls"]
                 new_discovery = True
 
     if info.get("qdrama_url") and not tracking["qdrama_done"]:
         res = get_qdrama_ep(info["qdrama_url"], target_ep)
         if res and res["watch_urls"]:
-            if set(res["watch_urls"]) == set(info.get("qdrama_last_servers", [])):
-                pass
+            # فحص الذكاء: لو مفيش سيرفرات تحميل، يبقى حلقة وهمية (حجز)
+            if not res["down_urls"]:
+                pass 
             else:
                 tracking["watch_urls"].extend(res["watch_urls"])
                 tracking["down_urls"].extend(res["down_urls"])
                 tracking["qdrama_done"] = True
                 tracking["qdrama_new_url"] = res["url"]
-                info["qdrama_last_servers"] = res["watch_urls"]
                 new_discovery = True
                 
     if new_discovery:
@@ -356,36 +358,6 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(1)
 
-def cache_initial_servers(slug, info):
-    bot.send_message(ADMIN_CHAT_ID, f"⏳ جاري حفظ سيرفرات حلقة {info['last_ep']} للمسلسل [{info['title']}] في الخلفية (لمنع الحلقات الوهمية)...")
-    updated = False
-    
-    if info.get('laroza_url') and not info.get('laroza_last_servers'):
-        res = get_laroza_ep(info['laroza_url'], info['last_ep'])
-        if res and res["watch_urls"]:
-            info['laroza_last_servers'] = res["watch_urls"]
-            info['laroza_url'] = res["url"]
-            updated = True
-            
-    if info.get('qdrama_url') and not info.get('qdrama_last_servers'):
-        res = get_qdrama_ep(info['qdrama_url'], info['last_ep'])
-        if res and res["watch_urls"]:
-            info['qdrama_last_servers'] = res["watch_urls"]
-            info['qdrama_url'] = res["url"]
-            updated = True
-            
-    if updated:
-        data = load_series_data()
-        if slug in data:
-            data[slug]['laroza_last_servers'] = info.get('laroza_last_servers', [])
-            data[slug]['laroza_url'] = info.get('laroza_url', '')
-            data[slug]['qdrama_last_servers'] = info.get('qdrama_last_servers', [])
-            data[slug]['qdrama_url'] = info.get('qdrama_url', '')
-            save_series_data(data)
-        bot.send_message(ADMIN_CHAT_ID, f"✅ تم الانتهاء من تخزين سيرفرات [{info['title']}] بنجاح! البوت مستعد لمراقبة حلقة {info['last_ep']+1}.")
-    else:
-        bot.send_message(ADMIN_CHAT_ID, f"⚠️ لم أتمكن من جلب سيرفرات الحلقة الحالية لـ [{info['title']}]. يرجى التأكد من الروابط.")
-
 def admin_only(message):
     return str(message.chat.id) == str(ADMIN_CHAT_ID)
 
@@ -448,13 +420,10 @@ def add_step_qdrama(message, title, series_id, last_ep, laroza_url):
         "series_id": series_id,
         "last_ep": last_ep,
         "laroza_url": laroza_url,
-        "qdrama_url": qdrama_url,
-        "laroza_last_servers": [],
-        "qdrama_last_servers": []
+        "qdrama_url": qdrama_url
     }
     save_series_data(data)
-    bot.reply_to(message, "✅ تمت إضافة المسلسل بنجاح!", parse_mode="HTML")
-    threading.Thread(target=cache_initial_servers, args=(slug, data[slug]), daemon=True).start()
+    bot.reply_to(message, "✅ تمت إضافة المسلسل بنجاح!\n💤 البوت الآن مستعد لمراقبة الحلقة القادمة ولن ينخدع بالحلقات الوهمية.", parse_mode="HTML")
 
 @bot.message_handler(commands=["list", "status", "check"])
 def list_items(message):
@@ -470,6 +439,12 @@ def list_items(message):
         for slug, info in data.items():
             title = html.escape(str(info.get("title", slug)))
             last_ep = info.get("last_ep", 0)
+            
+            active_sources = []
+            if info.get("laroza_url"): active_sources.append("لاروزا")
+            if info.get("qdrama_url"): active_sources.append("كيو دراما")
+            sources_str = " + ".join(active_sources) if active_sources else "بدون مصدر"
+            
             status_text = "مستعد ✅"
             if "tracking" in info:
                 tr = info["tracking"]
@@ -479,7 +454,8 @@ def list_items(message):
                     if tr["laroza_done"]: done.append("لاروزا")
                     if tr["qdrama_done"]: done.append("كيو")
                     status_text = f"🔄 بانتظار الباقي (تم: {'+'.join(done)})"
-            lines.append(f"🎬 <b>{title}</b> (حلقة {last_ep}) | {status_text}")
+            
+            lines.append(f"🎬 <b>{title}</b> (حلقة {last_ep}) | 📡 [{sources_str}] | {status_text}")
             
     bot.reply_to(message, "\n".join(lines), parse_mode="HTML")
 
@@ -540,7 +516,7 @@ def backup_data(message):
         with open(DATA_FILE, "rb") as f:
             bot.send_document(message.chat.id, f, caption="✅ <b>نسخة احتياطية (series.json)</b>", parse_mode="HTML")
     else:
-        bot.reply_to(message, "⚠️ لا توجد بيانات للنسخ.")
+        bot.reply_to(message, "⚠️️ لا توجد بيانات للنسخ.")
 
 @bot.message_handler(commands=["restore"])
 def restore_data_step(message):
