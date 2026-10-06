@@ -479,7 +479,41 @@ def backup_data(message):
 @bot.message_handler(commands=['restore'])
 def restore_data(message):
     if message.chat.id != ADMIN_ID: return
-    bot.reply_to(message, "الرجاء إرسال ملف `series.json` الآن للقيام بالاستعادة، ثم قم بالرد عليه بكلمة `تأكيد` (غير مدعوم حالياً بشكل تلقائي بالكامل لتجنب الأخطاء، تواصل مع المطور).")
+    msg = bot.reply_to(message, "الرجاء إرسال ملف `series.json` الآن، أو قم بنسخ ولصق محتوى الـ JSON مباشرة هنا في رسالة:")
+    # تسجيل الخطوة القادمة لاستقبال الملف أو النص
+    bot.register_next_step_handler(msg, process_restore_step)
+
+def process_restore_step(message):
+    if message.chat.id != ADMIN_ID: return
+    
+    # لو الأدمن حب يلغي العملية
+    if message.text and message.text.startswith('/'):
+        bot.reply_to(message, "تم إلغاء الاستعادة. للبدء من جديد أرسل /restore")
+        return
+        
+    try:
+        data_to_save = None
+        
+        # لو بعت ملف
+        if message.document:
+            file_info = bot.get_file(message.document.file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            data_to_save = json.loads(downloaded_file.decode('utf-8'))
+            
+        # لو بعت النص مباشرة
+        elif message.text:
+            data_to_save = json.loads(message.text)
+            
+        if isinstance(data_to_save, dict):
+            save_data(data_to_save)
+            bot.reply_to(message, "✅ تم استعادة البيانات بنجاح! سيتم العمل بها في دورة الفحص القادمة.")
+        else:
+            bot.reply_to(message, "❌ خطأ: البيانات ليست بصيغة JSON صحيحة.")
+            
+    except json.JSONDecodeError:
+        bot.reply_to(message, "❌ محتوى غير صالح! تأكد أنه بصيغة JSON صحيحة (انسخ النص بالكامل وبدون أي إضافات).")
+    except Exception as e:
+        bot.reply_to(message, f"❌ حدث خطأ أثناء الاستعادة: {e}")
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_scheduler, daemon=True)
