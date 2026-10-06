@@ -70,10 +70,35 @@ def extract_vid(url):
     return qs.get('vid', [None])[0]
 
 def is_valid_url(url):
+    if not url: return False
     url_lower = url.lower()
     for ban in BANNED_SERVERS:
         if ban in url_lower: return False
     return True
+
+def extract_video_fingerprint(url):
+    if not url: return None
+    try:
+        parsed = urlparse(url)
+        netloc = parsed.netloc.lower()
+        parts = [p for p in parsed.path.strip('/').lower().split('/') if p]
+        if len(parts) >= 2:
+            return f"{netloc}/{parts[0]}/{parts[1]}"
+        base = f"{netloc}/{parts[0]}" if parts else netloc
+        if parsed.query:
+            qs = parse_qs(parsed.query, keep_blank_values=False)
+            id_params = ['id', 'oid', 'v', 'vid', 'file', 'i', 'key', 'uid', 'code']
+            id_parts = []
+            for p in id_params:
+                if p in qs:
+                    id_parts.append(f"{p}={qs[p][0].lower()}")
+            if id_parts:
+                return f"{base}?{'&'.join(id_parts)}"
+            first_key = sorted(qs.keys())[0]
+            return f"{base}?{first_key}={qs[first_key][0][:40].lower()}"
+        return base
+    except:
+        return None
 
 def select_servers(watch_urls, down_urls):
     seen = set()
@@ -89,7 +114,7 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # ترتيب المشاهدة المخصص: liiivideo ثم uqload
+    # ترتيب المشاهدة المخصص
     w1 = pop_match(w_pool, ['liiivideo', 'livideo'])
     if not w1: w1 = pop_match(w_pool, ['uqload'])
 
@@ -104,7 +129,7 @@ def select_servers(watch_urls, down_urls):
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
-    # ترتيب التحميل المخصص: liiivideo ثم uqload
+    # ترتيب التحميل المخصص
     d1 = pop_match(d_pool, ['liiivideo', 'livideo'])
     if not d1: d1 = pop_match(d_pool, ['1cloud'])
 
@@ -116,7 +141,7 @@ def select_servers(watch_urls, down_urls):
 
     return w1, w2, w3, w4, d1, d2
 
-def get_laroza_ep(current_url, target_ep):
+def get_laroza_ep(current_url, target_ep, seen_fps):
     html_content = fetch_html(current_url)
     if not html_content: return None
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -154,11 +179,16 @@ def get_laroza_ep(current_url, target_ep):
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
     down_urls = [li.get('data-download-url') for li in dl_soup.select('ul.downloadlist li') if li.get('data-download-url')]
         
-    # فلترة الروابط (استبعاد fembed وغيرها)
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     
-    # الدرع الواقي: إذا لم نجد روابط تحميل صالحة، إذن هي حلقة وهمية
+    # حماية 1: درع التحميل (إذا كانت حلقة بدون سيرفرات تحميل، فهي حلقة وهمية)
     if not valid_downs: return None
+
+    # حماية 2: درع البصمة للاروزا (مقارنة السيرفرات بالبصمات المحفوظة)
+    for link in watch_urls:
+        fp = extract_video_fingerprint(link)
+        if fp and (fp in seen_fps):
+            return None # حلقة وهمية (مكررة البصمة)
 
     return {"url": target_url, "watch_urls": watch_urls, "down_urls": valid_downs}
 
@@ -200,7 +230,7 @@ def get_qdrama_ep(current_url, target_ep):
         
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     
-    # الدرع الواقي: إذا لم نجد روابط تحميل صالحة، إذن هي حلقة وهمية
+    # حماية كيو دراما: درع التحميل (إذا كانت حلقة بدون سيرفرات تحميل، فهي حلقة وهمية)
     if not valid_downs: return None
         
     return {"url": target_url, "watch_urls": watch_urls, "down_urls": valid_downs}
@@ -222,10 +252,21 @@ def scan_item(slug, info):
     tracking = info["tracking"]
     new_discovery = False
     
-    # فحص لاروزا
+    # فحص لاروزا مع البصمة
     if info.get("laroza_url") and not tracking["laroza_done"]:
-        res = get_laroza_ep(info["laroza_url"], target_ep)
+        if "laroza_seen_fps" not in info:
+            info["laroza_seen_fps"] = []
+            
+        res = get_laroza_ep(info["laroza_url"], target_ep, info["laroza_seen_fps"])
         if res:
+            # إضافة بصمات الحلقة الجديدة للحماية في المستقبل
+            for u in res["watch_urls"]:
+                fp = extract_video_fingerprint(u)
+                if fp and fp not in info["laroza_seen_fps"]:
+                    info["laroza_seen_fps"].append(fp)
+            # الحفاظ على آخر 50 بصمة لعدم تضخم الملف
+            info["laroza_seen_fps"] = info["laroza_seen_fps"][-50:]
+
             tracking["watch_urls"].extend(res["watch_urls"])
             tracking["down_urls"].extend(res["down_urls"])
             tracking["laroza_done"] = True
@@ -356,11 +397,28 @@ def add_step_qdrama(message, title, series_id, last_ep, laroza_url):
     if not laroza_url and not qdrama_url:
         return bot.reply_to(message, "❌ لازم تحط رابط لموقع واحد على الأقل!")
         
+    laroza_seen_fps = []
+    if laroza_url:
+        bot.send_message(message.chat.id, "⏳ جاري حفظ بصمات لاروزا الحالية للحماية...")
+        try:
+            qs = parse_qs(urlparse(laroza_url).query)
+            vid = qs.get('vid', [None])[0]
+            if vid:
+                play_url = urljoin(laroza_url, f"/play.php?vid={vid}")
+                play_html = fetch_html(play_url)
+                play_soup = BeautifulSoup(play_html, 'html.parser')
+                w_urls = [li.get('data-embed-url') for li in play_soup.select('ul.WatchList li') if li.get('data-embed-url')]
+                for u in w_urls:
+                    fp = extract_video_fingerprint(u)
+                    if fp: laroza_seen_fps.append(fp)
+        except: pass
+
     slug = f"series_{series_id}"
     data = load_series_data()
     data[slug] = {
         "title": title, "series_id": series_id, "last_ep": last_ep,
-        "laroza_url": laroza_url, "qdrama_url": qdrama_url
+        "laroza_url": laroza_url, "qdrama_url": qdrama_url,
+        "laroza_seen_fps": laroza_seen_fps
     }
     save_series_data(data)
     bot.reply_to(message, f"✅ تمت إضافة المسلسل بنجاح!\nالبوت مستعد لمراقبة حلقة {last_ep + 1}.", parse_mode="HTML")
