@@ -150,23 +150,23 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # الترتيب المحدث للمشاهدة: vidspeed في الصدارة، ثم liiivideo ثم uqload
+    # الترتيب المحدث للمشاهدة حسب طلبك:
+    # 1. vidspeed (أساسي)
+    # 2. mp4plus (أساسي)
+    # 3. uqload
+    # 4. ok أو vk
     w1 = pop_match(w_pool, ['vidspeed'])
-    if not w1: w1 = pop_match(w_pool, ['liiivideo', 'livideo'])
-    if not w1: w1 = pop_match(w_pool, ['uqload'])
-
-    w2 = pop_match(w_pool, ['liiivideo', 'livideo'])
-    if not w2: w2 = pop_match(w_pool, ['uqload'])
-
-    w3 = pop_match(w_pool, ['rty', 'ok.ru', 'ok', 'vk.com', 'vk', 'anafast', 'vidmoly'])
-    w4 = pop_match(w_pool, ['rty', 'ok.ru', 'ok', 'vk.com', 'vk', 'anafast', 'vidmoly'])
+    w2 = pop_match(w_pool, ['mp4plus'])
+    w3 = pop_match(w_pool, ['uqload'])
+    w4 = pop_match(w_pool, ['ok.ru', 'ok', 'vk.com', 'vk'])
     
+    # ملء أي فراغات باقية من السيرفرات المتاحة إذا لم تتوفر السيرفرات المطلوبة
     if not w1 and w_pool: w1 = w_pool.pop(0)
     if not w2 and w_pool: w2 = w_pool.pop(0)
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
-    # ترتيب التحميل المخصص
+    # ترتيب التحميل (بقي كما هو بناءً على طلبك)
     d1 = pop_match(d_pool, ['liiivideo', 'livideo'])
     if not d1: d1 = pop_match(d_pool, ['uqload'])
 
