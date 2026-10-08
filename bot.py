@@ -571,17 +571,21 @@ def process_restore(message):
         if message.document:
             file_info = bot.get_file(message.document.file_id)
             dl_file = bot.download_file(file_info.file_path)
+            # التأكد من فك تشفير الملف بشكل صحيح
             raw_data = dl_file.decode('utf-8')
         elif message.text:
             raw_data = message.text
         else:
             return bot.reply_to(message, "❌ يجب إرسال ملف كـ Document أو إرسال النص (JSON) مباشرة.")
             
+        # محاولة تنظيف النص لو كان فيه مسافات زائدة
+        raw_data = raw_data.strip()
+        
         parsed_data = json.loads(raw_data)
         save_series_data(parsed_data)
         bot.reply_to(message, "✅ <b>تمت الاستعادة بنجاح!</b>", parse_mode="HTML")
-    except json.JSONDecodeError:
-        bot.reply_to(message, "❌ <b>خطأ:</b> النص المرسل ليس بصيغة JSON صحيحة.", parse_mode="HTML")
+    except json.JSONDecodeError as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> النص المرسل ليس بصيغة JSON صحيحة.\nالتفاصيل: <code>{e}</code>", parse_mode="HTML")
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ في الاستعادة: {e}")
 
