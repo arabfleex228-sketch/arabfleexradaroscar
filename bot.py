@@ -150,23 +150,18 @@ def select_servers(watch_urls, down_urls):
                     return url
         return ""
 
-    # الترتيب المحدث للمشاهدة حسب طلبك:
-    # 1. vidspeed (أساسي)
-    # 2. mp4plus (أساسي)
-    # 3. uqload
-    # 4. ok أو vk
+    # الترتيب المحدث للمشاهدة
     w1 = pop_match(w_pool, ['vidspeed'])
     w2 = pop_match(w_pool, ['mp4plus'])
     w3 = pop_match(w_pool, ['uqload'])
     w4 = pop_match(w_pool, ['ok.ru', 'ok', 'vk.com', 'vk'])
     
-    # ملء أي فراغات باقية من السيرفرات المتاحة إذا لم تتوفر السيرفرات المطلوبة
     if not w1 and w_pool: w1 = w_pool.pop(0)
     if not w2 and w_pool: w2 = w_pool.pop(0)
     if not w3 and w_pool: w3 = w_pool.pop(0)
     if not w4 and w_pool: w4 = w_pool.pop(0)
 
-    # ترتيب التحميل (بقي كما هو بناءً على طلبك)
+    # ترتيب التحميل
     d1 = pop_match(d_pool, ['liiivideo', 'livideo'])
     if not d1: d1 = pop_match(d_pool, ['uqload'])
 
@@ -186,7 +181,7 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
     target_url = None
     active_div = None
     
-    # 1. تحديد الموسم النشط عشان نتجاهل المواسم القديمة تماماً (حتى لا تتداخل الحلقات)
+    # 1. تحديد الموسم النشط عشان نتجاهل المواسم القديمة تماماً
     active_tab = soup.select_one('.SeasonsBoxUL li.active')
     if active_tab and active_tab.has_attr('data-serie'):
         active_serie = active_tab['data-serie']
@@ -209,7 +204,7 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
             target_url = urljoin(current_url, a.get('href'))
             break
 
-    # دعم الموبايل (البحث في القائمة المنسدلة للموسم النشط)
+    # دعم الموبايل
     if not target_url:
         mobile_container = soup
         active_mob = soup.select_one('select#mobileselect option.mactive')
@@ -245,10 +240,8 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     valid_watches = [u for u in watch_urls if is_valid_url(u)]
     
-    # حماية 1: درع التحميل (إذا كانت حلقة بدون سيرفرات تحميل مفلترة ونظيفة، فهي حلقة وهمية)
     if not valid_downs: return None
 
-    # حماية 2: درع البصمة (استخراج بصمة السيرفرات ومقارنتها لمنع الحلقات الوهمية ذات الإعلانات المكررة)
     for link in valid_watches:
         fp = extract_video_fingerprint(link)
         if fp and (fp in seen_fps):
@@ -295,7 +288,6 @@ def get_qdrama_ep(current_url, target_ep):
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     valid_watches = [u for u in watch_urls if is_valid_url(u)]
     
-    # حماية كيو دراما: درع التحميل (إذا كانت حلقة بدون سيرفرات تحميل نظيفة، فهي حلقة وهمية)
     if not valid_downs: return None
         
     return {"url": target_url, "watch_urls": valid_watches, "down_urls": valid_downs}
@@ -317,25 +309,21 @@ def scan_item(slug, info):
     tracking = info["tracking"]
     new_discovery = False
     
-    # فحص لاروزا مع البصمة وتبديل الدومين التلقائي
     if info.get("laroza_url") and not tracking["laroza_done"]:
-        # تحديث الدومين إذا لزم الأمر
         working_url = get_working_laroza_url(info["laroza_url"])
         if working_url:
             if working_url != info["laroza_url"]:
-                info["laroza_url"] = working_url # حفظ الدومين الجديد
+                info["laroza_url"] = working_url 
                 
             if "laroza_seen_fps" not in info:
                 info["laroza_seen_fps"] = []
                 
             res = get_laroza_ep(info["laroza_url"], target_ep, info["laroza_seen_fps"])
             if res:
-                # إضافة بصمات الحلقة الجديدة للحماية في المستقبل
                 for u in res["watch_urls"]:
                     fp = extract_video_fingerprint(u)
                     if fp and fp not in info["laroza_seen_fps"]:
                         info["laroza_seen_fps"].append(fp)
-                # الحفاظ على آخر 50 بصمة لعدم تضخم الملف
                 info["laroza_seen_fps"] = info["laroza_seen_fps"][-50:]
 
                 tracking["watch_urls"].extend(res["watch_urls"])
@@ -344,7 +332,6 @@ def scan_item(slug, info):
                 tracking["laroza_new_url"] = res["url"]
                 new_discovery = True
 
-    # فحص كيو دراما
     if info.get("qdrama_url") and not tracking["qdrama_done"]:
         res = get_qdrama_ep(info["qdrama_url"], target_ep)
         if res:
@@ -424,7 +411,7 @@ def run_scheduler():
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     if str(message.chat.id) != ADMIN_CHAT_ID: return
-    bot.reply_to(message, "🤖 <b>نظام المراقبة (لاروزا + كيو دراما)</b>\n\n🔹 <code>/add</code> — إضافة مسلسل\n🔹 <code>/del</code> — حذف مسلسل\n🔹 <code>/status</code> — الحالة\n🔹 <code>/backup</code> — نسخة احتياطية 📥\n🔹 <code>/restore</code> — استعادة البيانات 📤", parse_mode="HTML")
+    bot.reply_to(message, "🤖 <b>نظام المراقبة (لاروزا + كيو دراما)</b>\n\n🔹 <code>/add</code> — إضافة مسلسل\n🔹 <code>/del</code> — حذف مسلسل\n🔹 <code>/status</code> — الحالة ومعرفة الدومينات الحالية\n🔹 <code>/updatelaroza</code> — تحديث دومين لاروزا لكل المسلسلات 🔄\n🔹 <code>/backup</code> — نسخة احتياطية 📥\n🔹 <code>/restore</code> — استعادة البيانات 📤", parse_mode="HTML")
 
 @bot.message_handler(commands=["add"])
 def add_item_start(message):
@@ -474,7 +461,6 @@ def add_step_qdrama(message, title, series_id, last_ep, laroza_url):
     laroza_seen_fps = []
     if laroza_url:
         bot.send_message(message.chat.id, "⏳ جاري حفظ بصمات لاروزا الحالية للحماية...")
-        # تحديث الدومين أثناء الإضافة لضمان حفظ رابط صالح
         working_url = get_working_laroza_url(laroza_url)
         if working_url: laroza_url = working_url
 
@@ -510,10 +496,12 @@ def list_items(message):
     if not data: lines.append("📭 لا توجد عناصر.")
     else:
         for slug, info in data.items():
-            title = html.escape(str(info.get("title", slug))) # تنظيف الاسم لحماية التنسيق
+            title = html.escape(str(info.get("title", slug)))
             last_ep = info.get("last_ep", 0)
             sources = []
-            if info.get("laroza_url"): sources.append("لاروزا")
+            if info.get("laroza_url"):
+                domain = urlparse(info.get("laroza_url")).netloc
+                sources.append(f"لاروزا ({domain})")
             if info.get("qdrama_url"): sources.append("كيو دراما")
             src_str = " + ".join(sources)
             status_txt = "مستعد ✅"
@@ -523,6 +511,43 @@ def list_items(message):
                 else: status_txt = f"🔄 بانتظار الباقي"
             lines.append(f"🎬 <b>{title}</b> (حلقة {last_ep}) | [{src_str}] | {status_txt}")
     bot.reply_to(message, "\n".join(lines), parse_mode="HTML")
+
+@bot.message_handler(commands=["updatelaroza"])
+def update_laroza_all_start(message):
+    if str(message.chat.id) != ADMIN_CHAT_ID: return
+    data = load_series_data()
+    if not data: return bot.reply_to(message, "📭 القائمة فارغة.")
+    msg = bot.reply_to(message, "🔗 <b>أرسل أي رابط شغال لموقع لاروزا (بالدومين الجديد):</b>\n(البوت هيستخرج الدومين ويحدث بيه كل المسلسلات اللي متسجلة مرة واحدة)", parse_mode="HTML")
+    bot.register_next_step_handler(msg, save_new_laroza_domain_all)
+
+def save_new_laroza_domain_all(message):
+    new_url = message.text.strip()
+    parsed_new = urlparse(new_url)
+    new_domain = parsed_new.netloc
+    new_scheme = parsed_new.scheme or "https"
+    
+    if not new_domain:
+        msg = bot.reply_to(message, "❌ الرابط غير صحيح. أرسل رابط كامل (مثال: https://laroza.new/...):")
+        bot.register_next_step_handler(msg, save_new_laroza_domain_all)
+        return
+        
+    data = load_series_data()
+    updated_count = 0
+    
+    for slug, info in data.items():
+        old_url = info.get("laroza_url")
+        if old_url:
+            parsed_old = urlparse(old_url)
+            # استبدال الدومين والبروتوكول فقط والاحتفاظ بمسار الحلقة
+            updated_url = parsed_old._replace(scheme=new_scheme, netloc=new_domain).geturl()
+            info["laroza_url"] = updated_url
+            updated_count += 1
+            
+    if updated_count > 0:
+        save_series_data(data)
+        bot.reply_to(message, f"✅ <b>تم تحديث دومين لاروزا بنجاح لـ {updated_count} مسلسل!</b>\nالدومين الجديد المستخدم حالياً: <code>{new_domain}</code>", parse_mode="HTML")
+    else:
+        bot.reply_to(message, "⚠️ لم يتم العثور على أي مسلسلات مسجلة تعتمد على لاروزا لتحديثها.", parse_mode="HTML")
 
 @bot.message_handler(commands=["del"])
 def delete_item(message):
@@ -571,16 +596,13 @@ def process_restore(message):
         if message.document:
             file_info = bot.get_file(message.document.file_id)
             dl_file = bot.download_file(file_info.file_path)
-            # التأكد من فك تشفير الملف بشكل صحيح
             raw_data = dl_file.decode('utf-8')
         elif message.text:
             raw_data = message.text
         else:
             return bot.reply_to(message, "❌ يجب إرسال ملف كـ Document أو إرسال النص (JSON) مباشرة.")
             
-        # محاولة تنظيف النص لو كان فيه مسافات زائدة
         raw_data = raw_data.strip()
-        
         parsed_data = json.loads(raw_data)
         save_series_data(parsed_data)
         bot.reply_to(message, "✅ <b>تمت الاستعادة بنجاح!</b>", parse_mode="HTML")
