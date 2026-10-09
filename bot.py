@@ -246,12 +246,8 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
     target_html = html_content if target_url == current_url else fetch_html(target_url)
     if not target_html: return None
     
-    # 1. فلتر الرسالة التحذيرية (الحلقة وهمية ومكررة)
+    # فلتر الرسالة التحذيرية فقط! (زر التحميل قد يختفي في بعض المسلسلات مثل سيدو حورية لذلك تم إلغاء شرطه)
     if "اذا وجدت الحلقة السابقة" in target_html or "فور نزولها" in target_html:
-        return "FAKE"
-        
-    # 2. فلتر زر التحميل (زر التحميل يختفي في الحلقة الوهمية)
-    if "download.php?vid=" not in target_html:
         return "FAKE"
     # =================================================
     
@@ -486,7 +482,7 @@ def run_scheduler():
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     if str(message.chat.id) != ADMIN_CHAT_ID: return
-    bot.reply_to(message, "🤖 <b>نظام المراقبة (لاروزا + كيو دراما)</b>\n\n🔹 <code>/add</code> — إضافة مسلسل\n🔹 <code>/del</code> — حذف مسلسل\n🔹 <code>/status</code> — تقرير الحالة الشامل\n🔹 <code>/updatelaroza</code> — تحديث الدومين العام لكل المسلسلات 🔄\n🔹 <code>/backup</code> — نسخة احتياطية 📥\n🔹 <code>/restore</code> — استعادة البيانات 📤", parse_mode="HTML")
+    bot.reply_to(message, "🤖 <b>نظام المراقبة (لاروزا + كيو دراما)</b>\n\n🔹 <code>/add</code> — إضافة مسلسل\n🔹 <code>/del</code> — حذف مسلسل\n🔹 <code>/setep</code> — تعديل رقم حلقة مسلسل ✏️\n🔹 <code>/status</code> — تقرير الحالة الشامل\n🔹 <code>/updatelaroza</code> — تحديث الدومين العام 🔄\n🔹 <code>/backup</code> — نسخة احتياطية 📥\n🔹 <code>/restore</code> — استعادة البيانات 📤", parse_mode="HTML")
 
 @bot.message_handler(commands=["add"])
 def add_item_start(message):
@@ -614,6 +610,36 @@ def list_items(message):
             msg_text += f"- {title}: حلقة {last_ep} — {status_txt}\n"
             
     bot.reply_to(message, msg_text)
+
+@bot.message_handler(commands=["setep"])
+def set_ep_start(message):
+    if str(message.chat.id) != ADMIN_CHAT_ID: return
+    data = load_series_data()
+    if not data: return bot.reply_to(message, "📭 القائمة فارغة.")
+    markup = InlineKeyboardMarkup(row_width=1)
+    for slug, info in data.items():
+        title = info.get('title', slug)
+        markup.add(InlineKeyboardButton(text=f"✏️ تعديل: {title}", callback_data=f"setep_{slug}"))
+    bot.reply_to(message, "🔢 اختر المسلسل لتعديل رقم آخر حلقة مسجلة:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('setep_'))
+def process_setep_callback(call):
+    slug = call.data.split('setep_')[1]
+    msg = bot.send_message(call.message.chat.id, "🔢 أرسل رقم آخر حلقة صحيحة للمسلسل الآن:\n(مثال: لو عاوز البوت يبحث عن 88، اكتب هنا 87)")
+    bot.register_next_step_handler(msg, save_new_ep, slug)
+    bot.answer_callback_query(call.id)
+
+def save_new_ep(message, slug):
+    try: new_ep = int(message.text.strip())
+    except: return bot.reply_to(message, "❌ يجب أن يكون رقماً.")
+    data = load_series_data()
+    if slug in data:
+        data[slug]['last_ep'] = new_ep
+        if 'tracking' in data[slug]: del data[slug]['tracking'] # مسح التتبع عشان يبدأ ينظف
+        save_series_data(data)
+        bot.reply_to(message, f"✅ تم تعديل آخر حلقة للمسلسل لتكون {new_ep} بنجاح.\nالبوت الآن سيبحث عن الحلقة {new_ep + 1}.")
+    else:
+        bot.reply_to(message, "❌ المسلسل غير موجود.")
 
 @bot.message_handler(commands=["updatelaroza"])
 def update_laroza_all_start(message):
