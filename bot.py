@@ -24,7 +24,7 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "1013251619")
 
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 DATA_FILE = os.path.join(DATA_DIR, "series.json")
-CONFIG_FILE = os.path.join(DATA_DIR, "config.json") # ملف إعدادات جديد لحفظ الدومين العام
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json") # ملف إعدادات لحفظ الدومين العام
 
 CHECK_INTERVAL_SECONDS = 150
 MAX_TRACKING_TIME_SECONDS = 3600
@@ -118,7 +118,7 @@ def replace_domain(url, new_domain):
     return p_url._replace(scheme=p_dom.scheme, netloc=p_dom.netloc).geturl()
 
 def get_working_laroza_url(url):
-    """دالة تستخدم في الإضافة للتحقق من أن الرابط المدخل يعمل واكتشاف الدومين الجديد"""
+    """دالة تستخدم لاكتشاف الدومين الجديد تلقائياً إذا تعطل الحالي"""
     if not url: return None
     try:
         res = curl_requests.get(url, impersonate="chrome", timeout=10, verify=False)
@@ -241,35 +241,53 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
     current_vid = qs.get('vid', [None])[0]
     if not target_url and current_vid and "video.php" in current_url: target_url = current_url
     if not target_url: return None
+    
+    # === الفلتر الذكي الجديد بناءً على تحليل الأكواد ===
+    target_html = html_content if target_url == current_url else fetch_html(target_url)
+    if not target_html: return None
+    
+    # 1. فلتر الرسالة التحذيرية (الحلقة وهمية ومكررة)
+    if "اذا وجدت الحلقة السابقة" in target_html or "فور نزولها" in target_html:
+        return "FAKE"
+        
+    # 2. فلتر زر التحميل (زر التحميل يختفي في الحلقة الوهمية)
+    if "download.php?vid=" not in target_html:
+        return "FAKE"
+    # =================================================
+    
     vid = extract_vid(target_url)
     if not vid: return None
     
-    play_url = urljoin(target_url, f"/play.php?vid={vid}")
-    play_html = fetch_html(play_url)
-    play_soup = BeautifulSoup(play_html, 'html.parser')
+    target_soup = BeautifulSoup(target_html, 'html.parser')
     
-    # التعديل الجديد: استخراج مرن للروابط ولا يشترط كلاسات معينة
-    watch_urls = [tag.get('data-embed-url') for tag in play_soup.select('[data-embed-url]') if tag.get('data-embed-url')]
+    # استخراج روابط المشاهدة من الصفحة مباشرة أولاً
+    watch_urls = [tag.get('data-embed-url') for tag in target_soup.select('[data-embed-url]') if tag.get('data-embed-url')]
+    
+    # إذا لم تكن موجودة، نبحث في play.php
+    if not watch_urls:
+        play_url = urljoin(target_url, f"/play.php?vid={vid}")
+        play_html = fetch_html(play_url)
+        play_soup = BeautifulSoup(play_html, 'html.parser')
+        watch_urls = [tag.get('data-embed-url') for tag in play_soup.select('[data-embed-url]') if tag.get('data-embed-url')]
         
     dl_url = urljoin(target_url, f"/download.php?vid={vid}")
     dl_html = fetch_html(dl_url)
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
     
-    # التعديل الجديد: استخراج مرن لسيرفرات التحميل
+    # استخراج مرن لسيرفرات التحميل
     down_urls = [tag.get('data-download-url') for tag in dl_soup.select('[data-download-url]') if tag.get('data-download-url')]
         
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     valid_watches = [u for u in watch_urls if is_valid_url(u)]
     
-    # حماية 1: إذا لم يجد روابط مشاهدة نهائياً (الحلقة مخفية أو لم تجهز بعد)
-    if not valid_watches: 
-        return "FAKE"
-
-    # حماية 2: درع البصمة لمنع الاعلانات
+    # درع البصمة لمنع الاعلانات
     for link in valid_watches:
         fp = extract_video_fingerprint(link)
         if fp and (fp in seen_fps):
             return "FAKE" 
+
+    if not valid_watches: 
+        return "FAKE"
 
     return {"url": target_url, "watch_urls": valid_watches, "down_urls": valid_downs}
 
@@ -387,6 +405,7 @@ def scan_item(slug, info):
                 tracking["laroza_new_url"] = res["url"]
                 new_discovery = True
 
+    # فحص كيو دراما
     if info.get("qdrama_url") and not tracking["qdrama_done"]:
         res = get_qdrama_ep(info["qdrama_url"], target_ep)
         if res:
@@ -432,7 +451,6 @@ def scan_item(slug, info):
         
         if is_complete or is_timeout:
             info["last_ep"] = target_ep
-            # تحديث مسار الحلقة (بدون الحاجة للاهتمام بالدومين لأنه يستبدل دائماً)
             if tracking.get("laroza_new_url"): info["laroza_url"] = tracking["laroza_new_url"]
             if tracking.get("qdrama_new_url"): info["qdrama_url"] = tracking["qdrama_new_url"]
             del info["tracking"]
@@ -535,7 +553,7 @@ def add_step_qdrama(message, title, series_id, last_ep, laroza_url):
                 play_url = urljoin(laroza_url, f"/play.php?vid={vid}")
                 play_html = fetch_html(play_url)
                 play_soup = BeautifulSoup(play_html, 'html.parser')
-                w_urls = [li.get('data-embed-url') for li in play_soup.select('ul.WatchList li') if li.get('data-embed-url')]
+                w_urls = [li.get('data-embed-url') for li in play_soup.select('[data-embed-url]') if li.get('data-embed-url')]
                 for u in w_urls:
                     if is_valid_url(u):
                         fp = extract_video_fingerprint(u)
@@ -557,7 +575,6 @@ def list_items(message):
     if str(message.chat.id) != ADMIN_CHAT_ID: return
     data = load_series_data()
     
-    # حساب وقت التشغيل
     now = datetime.now(timezone.utc)
     uptime_seconds = (now - bot_start_time).total_seconds()
     h = int(uptime_seconds // 3600)
@@ -567,7 +584,6 @@ def list_items(message):
     start_str = bot_start_time.strftime("%Y-%m-%d %H:%M:%S")
     last_scan_str = last_scan_at.strftime("%Y-%m-%d %H:%M:%S") if last_scan_at else "لم يبدأ بعد"
     
-    # بناء رسالة الحالة بالشكل المطلوب
     msg_text = f"البوت شغّال وتمام!\n"
     msg_text += f"وقت التشغيل: {h}س {m}د {sec}ث\n"
     msg_text += f"بدأ في: {start_str}\n"
