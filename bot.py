@@ -247,22 +247,29 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
     play_url = urljoin(target_url, f"/play.php?vid={vid}")
     play_html = fetch_html(play_url)
     play_soup = BeautifulSoup(play_html, 'html.parser')
-    watch_urls = [li.get('data-embed-url') for li in play_soup.select('ul.WatchList li') if li.get('data-embed-url')]
+    
+    # التعديل الجديد: استخراج مرن للروابط ولا يشترط كلاسات معينة
+    watch_urls = [tag.get('data-embed-url') for tag in play_soup.select('[data-embed-url]') if tag.get('data-embed-url')]
         
     dl_url = urljoin(target_url, f"/download.php?vid={vid}")
     dl_html = fetch_html(dl_url)
     dl_soup = BeautifulSoup(dl_html, 'html.parser')
-    down_urls = [li.get('data-download-url') for li in dl_soup.select('ul.downloadlist li') if li.get('data-download-url')]
+    
+    # التعديل الجديد: استخراج مرن لسيرفرات التحميل
+    down_urls = [tag.get('data-download-url') for tag in dl_soup.select('[data-download-url]') if tag.get('data-download-url')]
         
     valid_downs = [u for u in down_urls if is_valid_url(u)]
     valid_watches = [u for u in watch_urls if is_valid_url(u)]
     
-    # الإرجاع بـ "FAKE" إذا اكتشفنا دروع الحماية لتحديث حالة البوت
-    if not valid_downs: return "FAKE"
+    # حماية 1: إذا لم يجد روابط مشاهدة نهائياً (الحلقة مخفية أو لم تجهز بعد)
+    if not valid_watches: 
+        return "FAKE"
+
+    # حماية 2: درع البصمة لمنع الاعلانات
     for link in valid_watches:
         fp = extract_video_fingerprint(link)
         if fp and (fp in seen_fps):
-            return "FAKE"
+            return "FAKE" 
 
     return {"url": target_url, "watch_urls": valid_watches, "down_urls": valid_downs}
 
