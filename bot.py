@@ -23,7 +23,6 @@ DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 DATA_FILE = os.path.join(DATA_DIR, "series.json")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
-# تم تقليل الفحص لـ 40 ثانية بناءً على طلبك
 CHECK_INTERVAL_SECONDS = 40
 API_URL = "https://arabfleex.live/api_bot.php"
 SECRET_KEY = "ArabFleex_2024_SecRet"
@@ -266,7 +265,9 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
     for a in search_container.select('a'):
         if 'video.php' not in a.get('href', ''): continue
         em = a.find('em')
-        if em and em.text.strip() == str(target_ep):
+        text = a.text.strip()
+        # تحسين قوي لالتقاط الحلقة سواء داخل em أو في نص الزر نفسه
+        if (em and em.text.strip() == str(target_ep)) or re.search(r'(?:الحلقة|حلقة)\s*' + str(target_ep) + r'\b', text):
             target_url = urljoin(current_url, a.get('href'))
             break
 
@@ -319,8 +320,9 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
             is_fake = True
             break
             
+    # لو الحلقة موجودة بس مفيش أي سيرفر حقيقي، إذن هي حلقة وهمية
     if not valid_watches:
-        return "WAITING"
+        return "FAKE"
         
     if is_fake:
         return "FAKE"
@@ -395,23 +397,19 @@ def scan_all_series_once():
         scan_cycles += 1
         last_scan_at = datetime.now(timezone.utc)
         
-        # نأخذ قائمة المسلسلات فقط في البداية عشان نتجنب التداخل
         slugs = list(load_series_data().keys())
         
         for slug in slugs:
-            # نحمل البيانات طازجة قبل فحص كل مسلسل
             data = load_series_data()
-            if slug not in data: continue # لو اتمسح نتخطاه
+            if slug not in data: continue 
             
             info = data[slug]
             ep_before_scan = info.get("last_ep")
             
             scan_item(slug, info)
             
-            # نحمل البيانات تاني بعد الفحص (عشان لو تعدلت بـ setep واحنا بنفحص)
             latest_data = load_series_data()
             if slug in latest_data:
-                # لو المستخدم عدل الحلقة يدوياً أثناء الفحص، متعملش حفظ عشان منمسحش تعديله
                 if latest_data[slug].get("last_ep") != ep_before_scan:
                     continue 
                     
