@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BOT_TOKEN = "7808630939:AAESznQOSKVU9xFeDSk2OQZpOELP3P0sRas"
+BOT_TOKEN = "7808630939:AAET8hUTUOc82d_OdM0YTGm_5nRfG_GBFD8"
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "1013251619")
 
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
