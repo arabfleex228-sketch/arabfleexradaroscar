@@ -394,15 +394,30 @@ def scan_all_series_once():
     try:
         scan_cycles += 1
         last_scan_at = datetime.now(timezone.utc)
-        data = load_series_data()
-        changed = False
-        for slug, info in list(data.items()):
-            if scan_item(slug, info):
-                changed = True
-            else:
-                changed = True 
-        if changed:
-            save_series_data(data)
+        
+        # نأخذ قائمة المسلسلات فقط في البداية عشان نتجنب التداخل
+        slugs = list(load_series_data().keys())
+        
+        for slug in slugs:
+            # نحمل البيانات طازجة قبل فحص كل مسلسل
+            data = load_series_data()
+            if slug not in data: continue # لو اتمسح نتخطاه
+            
+            info = data[slug]
+            ep_before_scan = info.get("last_ep")
+            
+            scan_item(slug, info)
+            
+            # نحمل البيانات تاني بعد الفحص (عشان لو تعدلت بـ setep واحنا بنفحص)
+            latest_data = load_series_data()
+            if slug in latest_data:
+                # لو المستخدم عدل الحلقة يدوياً أثناء الفحص، متعملش حفظ عشان منمسحش تعديله
+                if latest_data[slug].get("last_ep") != ep_before_scan:
+                    continue 
+                    
+                latest_data[slug] = info
+                save_series_data(latest_data)
+                
     except Exception as e: print(f"[ERROR] Error during full scan: {e}")
     finally: scan_lock.release()
 
@@ -567,6 +582,7 @@ def save_new_ep(message, slug):
     if slug in data:
         data[slug]['last_ep'] = new_ep
         data[slug]['status_text'] = "تم التعديل اليدوي، جاري الفحص..."
+        data[slug]['laroza_seen_fps'] = [] # تصفير البصمات عشان ميفتكرش الحلقة الجديدة مكررة
         save_series_data(data)
         bot.reply_to(message, f"✅ تم تعديل آخر حلقة للمسلسل لتكون {new_ep} بنجاح.\nالبوت الآن سيبحث عن الحلقة {new_ep + 1}.")
     else:
