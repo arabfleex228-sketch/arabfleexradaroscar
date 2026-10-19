@@ -39,6 +39,7 @@ bot_start_time = datetime.now(timezone.utc)
 global_laroza_domain = "https://larooza.asia"
 manual_domain = None
 
+# قائمة سيرفرات الفيديو الحقيقية لفلترة الحلقات الوهمية
 REAL_VIDEO_HOSTS = [
     "streamtape", "uqload", "doodstream", "dood.", "mp4upload",
     "voe.sx", "filemoon", "ok.ru", "vk.com", "youtube.com",
@@ -151,29 +152,61 @@ def replace_domain(url, new_domain):
     return p_url._replace(scheme=p_dom.scheme, netloc=p_dom.netloc).geturl()
 
 def get_working_laroza_domain():
-    global global_laroza_domain
+    global global_laroza_domain, manual_domain
     
-    if manual_domain:
+    def test_domain(d):
         try:
-            res = curl_requests.get(manual_domain, impersonate="chrome", timeout=10, verify=False)
-            if res.status_code == 200 and ("video" in res.text or "view-serie" in res.text or "SeasonsEpisodes" in res.text):
-                return manual_domain
+            res = curl_requests.get(d, impersonate="chrome", timeout=10, verify=False)
+            if res.status_code == 200 and ("video" in res.text or "view-serie" in res.text or "SeasonsEpisodes" in res.text or "laroza" in res.text.lower()):
+                return True
         except: pass
+        return False
 
-    try:
-        res = curl_requests.get(global_laroza_domain, impersonate="chrome", timeout=10, verify=False)
-        if res.status_code == 200 and ("video" in res.text or "view-serie" in res.text or "SeasonsEpisodes" in res.text):
-            return global_laroza_domain
-    except: pass
+    # 1. اختبار الدومين اليدوي أولاً
+    if manual_domain:
+        if test_domain(manual_domain):
+            return manual_domain
 
+    # 2. اختبار الدومين العام الحالي
+    if global_laroza_domain and test_domain(global_laroza_domain):
+        return global_laroza_domain
+
+    # 3. اختبار القائمة المحفوظة
     for domain in LAROZA_KNOWN_DOMAINS:
+        if test_domain(domain):
+            global_laroza_domain = domain
+            save_config()
+            return domain
+            
+    # 4. البحث في DuckDuckGo (الملاذ الأخير)
+    search_queries = ["موقع لاروزا", "larozza site", "laroza مسلسلات"]
+    exclude_domains = ["youtube.com", "dailymotion.com", "yandex.com", "facebook.com", "twitter.com", "laaroza-tv.com", "cima.laaroza", "larozaa.top"]
+    search_keywords = ["larozaa", "larozza", "laroza", "larooza"]
+
+    for query in search_queries:
         try:
-            res = curl_requests.get(domain, impersonate="chrome", timeout=10, verify=False)
-            if res.status_code == 200 and ("video" in res.text or "view-serie" in res.text or "SeasonsEpisodes" in res.text):
-                global_laroza_domain = domain
-                save_config()
-                return domain
-        except: continue
+            req = curl_requests.post(
+                "https://lite.duckduckgo.com/lite/",
+                data={"q": query},
+                timeout=15,
+                impersonate="chrome",
+                verify=False
+            )
+            soup = BeautifulSoup(req.text, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                href = a.get('href', '')
+                parsed = urlparse(href)
+                netloc = parsed.netloc.lower()
+                if not netloc or not parsed.scheme.startswith('http'): continue
+                if any(ex in netloc for ex in exclude_domains): continue
+
+                if any(kw in netloc for kw in search_keywords):
+                    candidate = f"{parsed.scheme}://{parsed.netloc}"
+                    if test_domain(candidate):
+                        global_laroza_domain = candidate
+                        save_config()
+                        return candidate
+        except: pass
         
     return global_laroza_domain
 
@@ -333,6 +366,8 @@ def scan_item(slug, info):
             info["last_ep"] = target_ep
             info["laroza_url"] = res["url"]
             info["status_text"] = f"✅ تم اصطياد ح{target_ep}"
+            
+            # زيادة العداد عند نجاح الرفع فقط
             total_added += 1
             
             for u in res["watch_urls"]:
