@@ -38,7 +38,6 @@ bot_start_time = datetime.now(timezone.utc)
 global_laroza_domain = "https://larooza.asia"
 manual_domain = None
 
-# قائمة سيرفرات الفيديو الحقيقية لفلترة الحلقات الوهمية
 REAL_VIDEO_HOSTS = [
     "streamtape", "uqload", "doodstream", "dood.", "mp4upload",
     "voe.sx", "filemoon", "ok.ru", "vk.com", "youtube.com",
@@ -161,23 +160,19 @@ def get_working_laroza_domain():
         except: pass
         return False
 
-    # 1. اختبار الدومين اليدوي أولاً
     if manual_domain:
         if test_domain(manual_domain):
             return manual_domain
 
-    # 2. اختبار الدومين العام الحالي
     if global_laroza_domain and test_domain(global_laroza_domain):
         return global_laroza_domain
 
-    # 3. اختبار القائمة المحفوظة
     for domain in LAROZA_KNOWN_DOMAINS:
         if test_domain(domain):
             global_laroza_domain = domain
             save_config()
             return domain
             
-    # 4. البحث في DuckDuckGo (الملاذ الأخير)
     search_queries = ["موقع لاروزا", "larozza site", "laroza مسلسلات"]
     exclude_domains = ["youtube.com", "dailymotion.com", "yandex.com", "facebook.com", "twitter.com", "laaroza-tv.com", "cima.laaroza", "larozaa.top"]
     search_keywords = ["larozaa", "larozza", "laroza", "larooza"]
@@ -263,12 +258,18 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
 
     search_container = active_div if active_div else soup
     for a in search_container.select('a'):
-        if 'video.php' not in a.get('href', ''): continue
+        href = a.get('href', '')
+        if 'video.php' not in href: continue
         em = a.find('em')
         text = a.text.strip()
-        # تحسين قوي لالتقاط الحلقة سواء داخل em أو في نص الزر نفسه
+        
         if (em and em.text.strip() == str(target_ep)) or re.search(r'(?:الحلقة|حلقة)\s*' + str(target_ep) + r'\b', text):
-            target_url = urljoin(current_url, a.get('href'))
+            # تنظيف الرابط عشان ميحصلش مشكلة ./video
+            clean_href = href.lstrip('.')
+            if not clean_href.startswith('/'): clean_href = '/' + clean_href
+            parsed_current = urlparse(current_url)
+            base_domain = f"{parsed_current.scheme}://{parsed_current.netloc}"
+            target_url = urljoin(base_domain, clean_href)
             break
 
     if not target_url:
@@ -283,16 +284,26 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
             if f"الحلقة {target_ep}" in text or f"حلقة {target_ep}" in text:
                 val = option.get('value')
                 if val and val != "select-ep":
-                    target_url = urljoin(current_url, val)
+                    # تنظيف الرابط في حالة الموبايل
+                    clean_val = val.lstrip('.')
+                    if not clean_val.startswith('/'): clean_val = '/' + clean_val
+                    parsed_current = urlparse(current_url)
+                    base_domain = f"{parsed_current.scheme}://{parsed_current.netloc}"
+                    target_url = urljoin(base_domain, clean_val)
                     break
                     
     qs = parse_qs(urlparse(current_url).query)
     current_vid = qs.get('vid', [None])[0]
     if not target_url and current_vid and "video.php" in current_url: target_url = current_url
+    
     if not target_url: return "WAITING"
     
     target_html = html_content if target_url == current_url else fetch_html(target_url)
     if not target_html: return "WAITING"
+    
+    # فلتر الرسالة التحذيرية - لو لاروزا كاتبة الملاحظة يبقى الحلقة وهمية 100%
+    if "اذا وجدت الحلقة السابقة" in target_html or "فور نزولها" in target_html:
+        return "FAKE"
     
     vid = extract_vid(target_url)
     if not vid: return "WAITING"
@@ -313,6 +324,9 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
         
     valid_watches = [u for u in watch_urls if is_real_server(u)]
     
+    if not valid_watches:
+        return "FAKE"
+        
     is_fake = False
     for link in valid_watches:
         fp = extract_video_fingerprint(link)
@@ -320,10 +334,6 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
             is_fake = True
             break
             
-    # لو الحلقة موجودة بس مفيش أي سيرفر حقيقي، إذن هي حلقة وهمية
-    if not valid_watches:
-        return "FAKE"
-        
     if is_fake:
         return "FAKE"
 
@@ -365,13 +375,13 @@ def scan_item(slug, info):
             api_text = api_res.text.strip()
             safe_api_status = api_text[:50].replace('<', '').replace('>', '')
             
+            # زيادة العداد فقط عند نجاح رفع الحلقة
+            total_added += 1
             info["last_ep"] = target_ep
             info["laroza_url"] = res["url"]
             info["status_text"] = f"✅ تم اصطياد ح{target_ep}"
             
-            # زيادة العداد عند نجاح الرفع فقط
-            total_added += 1
-            
+            # حفظ بصمات السيرفرات عشان الحلقات اللي بعدها
             for u in res["watch_urls"]:
                 fp = extract_video_fingerprint(u)
                 if fp and fp not in info["laroza_seen_fps"]:
@@ -408,6 +418,7 @@ def scan_all_series_once():
             
             scan_item(slug, info)
             
+            # منع التداخل لو حد عدل الحلقة يدويا أثناء الفحص
             latest_data = load_series_data()
             if slug in latest_data:
                 if latest_data[slug].get("last_ep") != ep_before_scan:
@@ -576,7 +587,7 @@ def process_setep_callback(call):
 def save_new_ep(message, slug):
     try: new_ep = int(message.text.strip())
     except: return bot.reply_to(message, "❌ يجب أن يكون رقماً.")
-    data = load_series_data()
+    data = load_series_data() # بنسحب بيانات جديدة عشان نتفادى التداخل
     if slug in data:
         data[slug]['last_ep'] = new_ep
         data[slug]['status_text'] = "تم التعديل اليدوي، جاري الفحص..."
