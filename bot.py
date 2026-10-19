@@ -1,4 +1,3 @@
-import html
 import json
 import os
 import re
@@ -24,7 +23,8 @@ DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 DATA_FILE = os.path.join(DATA_DIR, "series.json")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
-CHECK_INTERVAL_SECONDS = 150
+# تم تقليل الفحص لـ 40 ثانية بناءً على طلبك
+CHECK_INTERVAL_SECONDS = 40
 API_URL = "https://arabfleex.live/api_bot.php"
 SECRET_KEY = "ArabFleex_2024_SecRet"
 
@@ -118,7 +118,6 @@ def extract_vid(url):
     return qs.get('vid', [None])[0]
 
 def is_real_server(url):
-    """يتحقق إن السيرفر من موقع فيديو حقيقي معروف لتجنب الإعلانات والوهمي."""
     if not url: return False
     url_lower = url.lower()
     for ban in BANNED_SERVERS:
@@ -126,7 +125,6 @@ def is_real_server(url):
     return any(host in url_lower for host in REAL_VIDEO_HOSTS)
 
 def extract_video_fingerprint(url):
-    """يستخرج البصمة الفريدة لمنع تكرار الحلقات الوهمية."""
     if not url: return None
     try:
         parsed = urlparse(url)
@@ -153,7 +151,6 @@ def replace_domain(url, new_domain):
     return p_url._replace(scheme=p_dom.scheme, netloc=p_dom.netloc).geturl()
 
 def get_working_laroza_domain():
-    """يكتشف الدومين الشغال مع إعطاء الأولوية للدومين اليدوي لو موجود"""
     global global_laroza_domain
     
     if manual_domain:
@@ -169,7 +166,6 @@ def get_working_laroza_domain():
             return global_laroza_domain
     except: pass
 
-    # بحث تلقائي
     for domain in LAROZA_KNOWN_DOMAINS:
         try:
             res = curl_requests.get(domain, impersonate="chrome", timeout=10, verify=False)
@@ -179,13 +175,13 @@ def get_working_laroza_domain():
                 return domain
         except: continue
         
-    return global_laroza_domain # نرجع الدومين المحفوظ كملاذ أخير
+    return global_laroza_domain
 
 def select_servers(watch_urls, down_urls):
     seen = set()
     w_pool = [x for x in watch_urls if is_real_server(x) and not (x in seen or seen.add(x))]
     seen = set()
-    d_pool = [x for x in down_urls if not (x in seen or seen.add(x))] # التحميل ممكن يكون مباشر
+    d_pool = [x for x in down_urls if not (x in seen or seen.add(x))]
 
     def pop_match(pool, keywords):
         for kw in keywords:
@@ -234,7 +230,6 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
                 break
 
     search_container = active_div if active_div else soup
-    
     for a in search_container.select('a'):
         if 'video.php' not in a.get('href', ''): continue
         em = a.find('em')
@@ -284,7 +279,6 @@ def get_laroza_ep(current_url, target_ep, seen_fps):
         
     valid_watches = [u for u in watch_urls if is_real_server(u)]
     
-    # التحقق من البصمة المكررة (وهمي)
     is_fake = False
     for link in valid_watches:
         fp = extract_video_fingerprint(link)
@@ -336,18 +330,16 @@ def scan_item(slug, info):
             api_text = api_res.text.strip()
             safe_api_status = api_text[:50].replace('<', '').replace('>', '')
             
-            # زيادة العداد وتحديث البيانات فقط لو الاتصال نجح
             info["last_ep"] = target_ep
             info["laroza_url"] = res["url"]
             info["status_text"] = f"✅ تم اصطياد ح{target_ep}"
             total_added += 1
             
-            # حفظ بصمات الحلقة المضافة
             for u in res["watch_urls"]:
                 fp = extract_video_fingerprint(u)
                 if fp and fp not in info["laroza_seen_fps"]:
                     info["laroza_seen_fps"].append(fp)
-            info["laroza_seen_fps"] = info["laroza_seen_fps"][-50:] # حفظ اخر 50 بصمة بس
+            info["laroza_seen_fps"] = info["laroza_seen_fps"][-50:] 
             
             msg = f"🎬 <b>تم اصطياد وتحديث الحلقة {target_ep}</b>\n"
             msg += f"📺 <b>المسلسل:</b> {info['title']}\n"
@@ -372,7 +364,6 @@ def scan_all_series_once():
         for slug, info in list(data.items()):
             if scan_item(slug, info):
                 changed = True
-            # تحديث الحالة النصية حتى لو ما ضافش عشان تظهر في قائمة status
             else:
                 changed = True 
         if changed:
@@ -425,7 +416,6 @@ def add_step_laroza(message, title, series_id, last_ep):
     laroza_seen_fps = []
     bot.send_message(message.chat.id, "⏳ جاري حفظ بصمات لاروزا الحالية للحماية وتثبيت الدومين...")
     
-    # تحديث الدومين العام تلقائياً عند إضافة مسلسل جديد يعمل لو مش متثبت يدوي
     parsed = urlparse(laroza_url)
     new_dom = f"{parsed.scheme}://{parsed.netloc}"
     if not manual_domain:
@@ -452,7 +442,7 @@ def add_step_laroza(message, title, series_id, last_ep):
     data[slug] = {
         "title": title, "series_id": series_id, "last_ep": last_ep,
         "laroza_url": laroza_url, "laroza_seen_fps": laroza_seen_fps,
-        "status_text": "جاري الفحص..."
+        "status_text": "بانتظار الفحص"
     }
     save_series_data(data)
     bot.reply_to(message, f"✅ تمت إضافة المسلسل بنجاح!\nالبوت مستعد لمراقبة حلقة {last_ep + 1}.", parse_mode="HTML")
@@ -504,7 +494,7 @@ def list_items(message):
     msg_text += f"🌐 <b>الدومين الحالي:</b> {current_dom}{dom_type}\n"
     msg_text += f"🔄 <b>عدد دورات الفحص:</b> {scan_cycles}\n"
     msg_text += f"➕ <b>إجمالي الحلقات المضافة:</b> {total_added}\n\n"
-    msg_text += f"📺 <b>آخر حالة للمسلسلات:</b>\n"
+    msg_text += f"📺 <b>آخر حالة للمسلسلات:</b>\n\n"
 
     if not data:
         msg_text += "📭 لا توجد مسلسلات مضافة."
@@ -513,9 +503,9 @@ def list_items(message):
             title = str(info.get("title", slug))
             last_ep = info.get("last_ep", 0)
             status_txt = info.get("status_text", "بانتظار الفحص")
-            msg_text += f"• {title}: حلقة {last_ep} — {status_txt}\n"
+            msg_text += f"🔹 <b>{title}:</b> حلقة {last_ep} — <i>{status_txt}</i>\n"
             
-    bot.reply_to(message, msg_text)
+    bot.reply_to(message, msg_text, parse_mode="HTML")
 
 @bot.message_handler(commands=["setep"])
 def set_ep_start(message):
@@ -602,7 +592,6 @@ def process_restore(message):
             
         parsed_data = json.loads(raw_data.strip())
         
-        # تنظيف البيانات المستعادة من كيو دراما والتراكنج القديم لو موجودة
         for slug in list(parsed_data.keys()):
             if "tracking" in parsed_data[slug]: del parsed_data[slug]["tracking"]
             if "qdrama_url" in parsed_data[slug]: del parsed_data[slug]["qdrama_url"]
